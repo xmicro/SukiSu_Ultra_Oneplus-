@@ -1,15 +1,12 @@
-# OnePlus Kernels with SukiSU Ultra and SUSFS (Wild Fork)
-
 <div align="center">
 
+# OnePlus ● SukiSU Ultra ● SUSFS
 
-</div>
+### Wild Fork
+
 
 ---
 
-<a name="english"></a>
-
-## English
 
 This repository provides GitHub Actions workflows to automatically build flashable AnyKernel3 ZIPs for multiple OnePlus devices with integrated SukiSU Ultra and SUSFS support.
 
