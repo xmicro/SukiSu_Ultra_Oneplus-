@@ -101,6 +101,13 @@ Then follow the workflow scripts for your target device and configuration.
 - [AnyKernel3](https://github.com/osm0sis/AnyKernel3)
 - [OnePlusOSS](https://github.com/OnePlusOSS)
 
+## 💝 Donations
+
+Any and all donations are appreciated!
+
+- PayPal: [paypal.me/fatalcoder524](https://paypal.me/fatalcoder524)
+- DM on Telegram for UPI donations!
+
 ## 🤝 Acknowledgments
 
 This project would not be possible without:
@@ -112,15 +119,6 @@ This project would not be possible without:
 - **AnyKernel3** by osm0sis and contributors
 - **OnePlusOSS** official kernel sources
 - Community contributors for testing, feedback, and improvements
-
-## ⚠️ Disclaimer
-
-This is unofficial software. Use it at your own risk.
-
-- The authors are not responsible for any damage to your device.
-- Always make a backup before flashing custom kernels.
-- Make sure you know how to restore your device.
-- Unlocking the bootloader and flashing custom software may void your warranty.
 
 ---
 
