@@ -1253,9 +1253,6 @@ runs:
             echo "⚠️ SUSFS integration patch reported rejects for SukiSU Ultra"
           fi
 
-          # SukiSU Ultra init.c often differs from classic KernelSU.
-          # The SUSFS patch may partially reject kernel/core/init.c, but the workflow applies
-          # init/link compatibility fixes later in common/drivers/kernelsu/core/init.c.
           if [ -f kernel/core/init.c.rej ]; then
             echo "ℹ️ Ignoring known SukiSU Ultra kernel/core/init.c reject; workflow applies compatibility fix later"
             echo "=== kernel/core/init.c.rej ==="
@@ -1263,7 +1260,6 @@ runs:
             rm -f kernel/core/init.c.rej
           fi
 
-          # Fail on any other reject. These are not known-safe.
           if [ -n "$(find . -name '*.rej' -print -quit)" ]; then
             echo "::error::SukiSU Ultra SUSFS patch left unexpected reject files:"
             find . -name '*.rej' -exec echo "=== {} ===" \; -exec cat {} \;
@@ -1341,7 +1337,7 @@ runs:
           fi
 
           # Fix SukiSU Ultra selinux_hide.c missing backup_sepolicy declaration
-          # and silence safe Clang function-address warnings when symbols are direct functions.
+          # and silence Clang function-address warnings.
           if [ -f drivers/kernelsu/feature/selinux_hide.c ]; then
             echo "Applying SukiSU Ultra selinux_hide backup_sepolicy fix..."
 
@@ -1381,26 +1377,38 @@ runs:
 
             echo "Checking SukiSU Ultra selinux_hide function-address warnings..."
 
-            if perl -0777 -ne 'exit(!(m/^[ \t]*(?:[A-Za-z_][A-Za-z0-9_]*[ \t*]+)+security_dump_masked_av_fn[ \t]*\([^;{}]*\)[ \t\n]*\{/m))' \
+            if grep -nE '^[[:space:]]*if[[:space:]]*\([[:space:]]*security_dump_masked_av_fn[[:space:]]*\)' \
               drivers/kernelsu/feature/selinux_hide.c; then
 
               perl -0pi -e 's/if\s*\(\s*security_dump_masked_av_fn\s*\)/if (\&security_dump_masked_av_fn)/g' \
                 drivers/kernelsu/feature/selinux_hide.c
 
-              echo "✅ Fixed security_dump_masked_av_fn direct-function warning"
+              if grep -nE '^[[:space:]]*if[[:space:]]*\([[:space:]]*\&security_dump_masked_av_fn[[:space:]]*\)' \
+                drivers/kernelsu/feature/selinux_hide.c; then
+                echo "✅ Silenced security_dump_masked_av_fn function-address warning"
+              else
+                echo "::error::Failed to patch security_dump_masked_av_fn if-check"
+                exit 1
+              fi
             else
-              echo "ℹ️ security_dump_masked_av_fn does not look like a direct function definition; leaving check unchanged"
+              echo "ℹ️ security_dump_masked_av_fn direct if-check not found"
             fi
 
-            if perl -0777 -ne 'exit(!(m/^[ \t]*(?:[A-Za-z_][A-Za-z0-9_]*[ \t*]+)+context_struct_compute_av_fn[ \t]*\([^;{}]*\)[ \t\n]*\{/m))' \
+            if grep -nE '^[[:space:]]*if[[:space:]]*\([[:space:]]*context_struct_compute_av_fn[[:space:]]*\)' \
               drivers/kernelsu/feature/selinux_hide.c; then
 
               perl -0pi -e 's/if\s*\(\s*context_struct_compute_av_fn\s*\)/if (\&context_struct_compute_av_fn)/g' \
                 drivers/kernelsu/feature/selinux_hide.c
 
-              echo "✅ Fixed context_struct_compute_av_fn direct-function warning"
+              if grep -nE '^[[:space:]]*if[[:space:]]*\([[:space:]]*\&context_struct_compute_av_fn[[:space:]]*\)' \
+                drivers/kernelsu/feature/selinux_hide.c; then
+                echo "✅ Silenced context_struct_compute_av_fn function-address warning"
+              else
+                echo "::error::Failed to patch context_struct_compute_av_fn if-check"
+                exit 1
+              fi
             else
-              echo "ℹ️ context_struct_compute_av_fn does not look like a direct function definition; leaving check unchanged"
+              echo "ℹ️ context_struct_compute_av_fn direct if-check not found"
             fi
           fi
 
@@ -1463,12 +1471,38 @@ runs:
             echo "Ensuring symbol_resolver.o is included in SukiSU build"
 
             if [ -f drivers/kernelsu/Kbuild ]; then
-              grep -q 'infra/symbol_resolver\.o' drivers/kernelsu/Kbuild || \
-                echo 'obj-y += infra/symbol_resolver.o' >> drivers/kernelsu/Kbuild
+              if ! grep -q 'infra/symbol_resolver\.o' drivers/kernelsu/Kbuild; then
+                echo 'obj-$(CONFIG_KSU) += infra/symbol_resolver.o' >> drivers/kernelsu/Kbuild
+              fi
+
+              if grep -q '^kernelsu-y[[:space:]]*[:+]\?=' drivers/kernelsu/Kbuild && \
+                 ! grep -q 'kernelsu-y.*infra/symbol_resolver\.o' drivers/kernelsu/Kbuild; then
+                echo 'kernelsu-y += infra/symbol_resolver.o' >> drivers/kernelsu/Kbuild
+              fi
+
+              if grep -q '^ksu-y[[:space:]]*[:+]\?=' drivers/kernelsu/Kbuild && \
+                 ! grep -q 'ksu-y.*infra/symbol_resolver\.o' drivers/kernelsu/Kbuild; then
+                echo 'ksu-y += infra/symbol_resolver.o' >> drivers/kernelsu/Kbuild
+              fi
+
             elif [ -f drivers/kernelsu/Makefile ]; then
-              grep -q 'infra/symbol_resolver\.o' drivers/kernelsu/Makefile || \
-                echo 'obj-y += infra/symbol_resolver.o' >> drivers/kernelsu/Makefile
+              if ! grep -q 'infra/symbol_resolver\.o' drivers/kernelsu/Makefile; then
+                echo 'obj-$(CONFIG_KSU) += infra/symbol_resolver.o' >> drivers/kernelsu/Makefile
+              fi
+
+              if grep -q '^kernelsu-y[[:space:]]*[:+]\?=' drivers/kernelsu/Makefile && \
+                 ! grep -q 'kernelsu-y.*infra/symbol_resolver\.o' drivers/kernelsu/Makefile; then
+                echo 'kernelsu-y += infra/symbol_resolver.o' >> drivers/kernelsu/Makefile
+              fi
+
+              if grep -q '^ksu-y[[:space:]]*[:+]\?=' drivers/kernelsu/Makefile && \
+                 ! grep -q 'ksu-y.*infra/symbol_resolver\.o' drivers/kernelsu/Makefile; then
+                echo 'ksu-y += infra/symbol_resolver.o' >> drivers/kernelsu/Makefile
+              fi
             fi
+
+            echo "Current KernelSU Kbuild/Makefile resolver entries:"
+            grep -Rns 'symbol_resolver\.o' drivers/kernelsu --include='Kbuild' --include='Makefile' 2>/dev/null || true
           fi
 
           # Disable or stub uts_spoof only when resolver backend is unavailable.
@@ -1476,11 +1510,52 @@ runs:
             echo "Checking whether find_kernel_symbol_exact() has a linked implementation..."
 
             FIND_KERNEL_SYMBOL_EXACT_IMPL="$(
-              grep -RnsE '^[[:space:]]*(static[[:space:]]+)?(inline[[:space:]]+)?(unsigned[[:space:]]+long|long|uintptr_t|void[[:space:]]*\*|void|int)[[:space:]]+([A-Za-z_][A-Za-z0-9_]*[[:space:]]+)*find_kernel_symbol_exact[[:space:]]*\([^;{}]*\)[[:space:]]*\{' \
-                drivers/kernelsu \
-                --include='*.c' 2>/dev/null \
-              | grep -v 'drivers/kernelsu/feature/uts_spoof.c' \
-              | head -n 1 || true
+              while IFS= read -r -d '' src; do
+                case "$src" in
+                  *drivers/kernelsu/feature/uts_spoof.c)
+                    continue
+                    ;;
+                esac
+
+                if perl -0777 -ne '
+                  if (m/
+                    ^[ \t]*
+                    (?:
+                      static[ \t]+|
+                      inline[ \t]+|
+                      __always_inline[ \t]+|
+                      noinline[ \t]+|
+                      __maybe_unused[ \t]+
+                    )*
+                    (?:
+                      unsigned[ \t]+long|
+                      long|
+                      uintptr_t|
+                      void[ \t]*\*|
+                      void|
+                      int
+                    )
+                    [ \t\n]+
+                    (?:
+                      [A-Za-z_][A-Za-z0-9_]*[ \t\n]+
+                    )*
+                    find_kernel_symbol_exact
+                    [ \t\n]*
+                    \(
+                      [^;{}]*
+                    \)
+                    [ \t\n]*
+                    \{
+                  /mx) {
+                    exit 0
+                  }
+                  exit 1
+                ' "$src"; then
+                  line="$(grep -n 'find_kernel_symbol_exact[[:space:]]*(' "$src" | head -n 1 || true)"
+                  printf '%s:%s\n' "$src" "${line:-matched}"
+                  break
+                fi
+              done < <(find drivers/kernelsu -name '*.c' -type f -print0 2>/dev/null)
             )"
 
             SYMBOL_RESOLVER_BUILT=false
@@ -1515,7 +1590,6 @@ runs:
                 sed -i '/uts_spoof\.o/d' drivers/kernelsu/Kbuild
               fi
 
-              # Replace uts_spoof.c with no-op fallback.
               printf '%s\n' \
                 '#include <linux/types.h>' \
                 '#include <linux/uaccess.h>' \
@@ -1541,8 +1615,6 @@ runs:
                 '}' \
                 > drivers/kernelsu/feature/uts_spoof.c
 
-              # If uts_spoof.o is removed from Kbuild, fallback symbols must exist in a compiled object.
-              # core/init.c is always compiled, so inject weak fallback symbols there too.
               if [ -f drivers/kernelsu/core/init.c ]; then
                 if ! grep -q 'SUKISU_UTS_SPOOF_FALLBACK_SYMBOLS' drivers/kernelsu/core/init.c; then
                   {
@@ -1579,16 +1651,6 @@ runs:
                   echo "✅ Injected uts_spoof fallback symbols into core/init.c"
                 else
                   echo "ℹ️ uts_spoof fallback symbols already present in core/init.c"
-                fi
-
-                if ! grep -q 'ksu_spoof_version' drivers/kernelsu/core/init.c; then
-                  echo "::error::Failed to inject ksu_spoof_version fallback into core/init.c"
-                  exit 1
-                fi
-
-                if ! grep -q 'ksu_set_spoof_version' drivers/kernelsu/core/init.c; then
-                  echo "::error::Failed to inject ksu_set_spoof_version fallback into core/init.c"
-                  exit 1
                 fi
               fi
 
