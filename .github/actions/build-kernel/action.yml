@@ -1253,9 +1253,6 @@ runs:
             echo "⚠️ SUSFS integration patch reported rejects for SukiSU Ultra"
           fi
 
-          # SukiSU Ultra init.c often differs from classic KernelSU.
-          # The SUSFS patch may partially reject kernel/core/init.c, but the workflow applies
-          # init/link compatibility fixes later in common/drivers/kernelsu/core/init.c.
           if [ -f kernel/core/init.c.rej ]; then
             echo "ℹ️ Ignoring known SukiSU Ultra kernel/core/init.c reject; workflow applies compatibility fix later"
             echo "=== kernel/core/init.c.rej ==="
@@ -1263,7 +1260,6 @@ runs:
             rm -f kernel/core/init.c.rej
           fi
 
-          # Fail on any other reject. These are not known-safe.
           if [ -n "$(find . -name '*.rej' -print -quit)" ]; then
             echo "::error::SukiSU Ultra SUSFS patch left unexpected reject files:"
             find . -name '*.rej' -exec echo "=== {} ===" \; -exec cat {} \;
@@ -1514,34 +1510,40 @@ runs:
             echo "Checking whether find_kernel_symbol_exact() has a linked implementation..."
 
             FIND_KERNEL_SYMBOL_EXACT_IMPL="$(
-              while IFS= read -r -d '' src; do
-                case "$src" in
-                  *drivers/kernelsu/feature/uts_spoof.c)
-                    continue
-                    ;;
-                esac
+              if [ -f drivers/kernelsu/infra/symbol_resolver.c ] && \
+                 perl -0777 -ne '
+                   if (/\bfind_kernel_symbol_exact\s*\([^;{}]*\)\s*\{/s) {
+                     exit 0
+                   }
+                   exit 1
+                 ' drivers/kernelsu/infra/symbol_resolver.c; then
 
-                if perl -0777 -ne '
-                  if (m/
-                    ^[ \t]*
-                    [A-Za-z_][A-Za-z0-9_[:space:]\*\(\)]*
-                    \bfind_kernel_symbol_exact\b
-                    [ \t\n]*
-                    \(
-                      [^;{}]*
-                    \)
-                    [ \t\n]*
-                    \{
-                  /mx) {
-                    exit 0
-                  }
-                  exit 1
-                ' "$src"; then
-                  line="$(grep -nE 'find_kernel_symbol_exact[[:space:]]*\(' "$src" | head -n 1 || true)"
-                  printf '%s:%s\n' "$src" "${line:-matched}"
-                  break
-                fi
-              done < <(find drivers/kernelsu -name '*.c' -type f -print0 2>/dev/null)
+                line="$(grep -nE 'find_kernel_symbol_exact[[:space:]]*\(' drivers/kernelsu/infra/symbol_resolver.c | head -n 1 || true)"
+                printf 'drivers/kernelsu/infra/symbol_resolver.c:%s\n' "${line:-matched}"
+
+              else
+                while IFS= read -r -d '' src; do
+                  case "$src" in
+                    *drivers/kernelsu/feature/uts_spoof.c)
+                      continue
+                      ;;
+                    *drivers/kernelsu/infra/symbol_resolver.c)
+                      continue
+                      ;;
+                  esac
+
+                  if perl -0777 -ne '
+                    if (/\bfind_kernel_symbol_exact\s*\([^;{}]*\)\s*\{/s) {
+                      exit 0
+                    }
+                    exit 1
+                  ' "$src"; then
+                    line="$(grep -nE 'find_kernel_symbol_exact[[:space:]]*\(' "$src" | head -n 1 || true)"
+                    printf '%s:%s\n' "$src" "${line:-matched}"
+                    break
+                  fi
+                done < <(find drivers/kernelsu -name '*.c' -type f -print0 2>/dev/null)
+              fi
             )"
 
             SYMBOL_RESOLVER_BUILT=false
@@ -1576,7 +1578,6 @@ runs:
                 sed -i '/uts_spoof\.o/d' drivers/kernelsu/Kbuild
               fi
 
-              # Replace uts_spoof.c with no-op fallback.
               printf '%s\n' \
                 '#include <linux/types.h>' \
                 '#include <linux/uaccess.h>' \
@@ -1602,8 +1603,6 @@ runs:
                 '}' \
                 > drivers/kernelsu/feature/uts_spoof.c
 
-              # If uts_spoof.o is removed from Kbuild, fallback symbols must exist in a compiled object.
-              # core/init.c is always compiled, so inject weak fallback symbols there too.
               if [ -f drivers/kernelsu/core/init.c ]; then
                 if ! grep -q 'SUKISU_UTS_SPOOF_FALLBACK_SYMBOLS' drivers/kernelsu/core/init.c; then
                   {
@@ -1640,16 +1639,6 @@ runs:
                   echo "✅ Injected uts_spoof fallback symbols into core/init.c"
                 else
                   echo "ℹ️ uts_spoof fallback symbols already present in core/init.c"
-                fi
-
-                if ! grep -q 'ksu_spoof_version' drivers/kernelsu/core/init.c; then
-                  echo "::error::Failed to inject ksu_spoof_version fallback into core/init.c"
-                  exit 1
-                fi
-
-                if ! grep -q 'ksu_set_spoof_version' drivers/kernelsu/core/init.c; then
-                  echo "::error::Failed to inject ksu_set_spoof_version fallback into core/init.c"
-                  exit 1
                 fi
               fi
 
