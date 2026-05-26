@@ -1428,6 +1428,31 @@ runs:
                 echo "ℹ️ backup_sepolicy declaration already present or not needed"
               fi
             fi
+
+            # Fix SUSFS v2.1.0 partial init.c patch mismatch on SukiSU Ultra
+            if [ -f drivers/kernelsu/core/init.c ]; then
+              echo "Applying minimal SukiSU Ultra init.c symbol fix..."
+
+              grep -q 'hook/syscall_hook.h' drivers/kernelsu/core/init.c || \
+                sed -i '/#include "ksu.h"/a #include "hook/syscall_hook.h"' \
+                drivers/kernelsu/core/init.c
+
+              sed -i \
+                -e 's/\bksu_syscall_hook_manager_init\s*(/ksu_syscall_hook_init(/g' \
+                -e 's/\bksu_syscall_hook_manager_exit\s*(/ksu_syscall_hook_exit(/g' \
+                drivers/kernelsu/core/init.c
+
+              sed -i '/ksu_lsm_hook_init\s*();/d' drivers/kernelsu/core/init.c
+
+              sed -i \
+                -e 's/if *(ksu_late_loaded) *{/if (0) {/' \
+                -e 's/if *(!ksu_late_loaded)/if (1)/' \
+                drivers/kernelsu/core/init.c
+
+              rm -f drivers/kernelsu/core/init.c.rej
+
+              echo "✅ Minimal SukiSU Ultra init.c symbol fix applied"
+            fi
     
             if [ -f drivers/kernelsu/Kbuild ]; then
               grep -q 'srctree)/$(src)' drivers/kernelsu/Kbuild || \
