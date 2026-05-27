@@ -1377,7 +1377,32 @@ runs:
           echo "Applying SukiSU linker-symbol compatibility cleanup..."
 
           # --------------------------------------------------------------
-          # Remove ksu_init_symbol_resolver() calls from init.c
+          # Ensure SukiSU symbol resolver and patch memory backends are built
+          # when their source files exist.
+          # --------------------------------------------------------------
+
+          for kbuild in \
+            "$KSU_FOLDER/kernel/Kbuild" \
+            "$COMMON_KERNEL_FOLDER/drivers/kernelsu/Kbuild"; do
+
+            if [ -f "$kbuild" ]; then
+              if [ -f "$(dirname "$kbuild")/infra/symbol_resolver.c" ] && \
+                 ! grep -q 'infra/symbol_resolver\.o' "$kbuild"; then
+                echo 'kernelsu-objs += infra/symbol_resolver.o' >> "$kbuild"
+                echo "✅ Added infra/symbol_resolver.o to $kbuild"
+              fi
+
+              if [ -f "$(dirname "$kbuild")/hook/arm64/patch_memory.c" ] && \
+                 ! grep -q 'hook/arm64/patch_memory\.o' "$kbuild"; then
+                echo 'kernelsu-objs += hook/arm64/patch_memory.o' >> "$kbuild"
+                echo "✅ Added hook/arm64/patch_memory.o to $kbuild"
+              fi
+            fi
+          done
+
+          # --------------------------------------------------------------
+          # Remove ksu_init_symbol_resolver() calls from init.c.
+          # The resolver object can still be built for other valid users.
           # --------------------------------------------------------------
 
           for target in \
@@ -1387,12 +1412,12 @@ runs:
             if [ -f "$target" ]; then
               sed -i '/ksu_init_symbol_resolver\s*();/d' "$target" || true
 
-              if grep -n 'ksu_init_symbol_resolver' "$target"; then
-                echo "::error::ksu_init_symbol_resolver still remains in $target"
+              if grep -n 'ksu_init_symbol_resolver\s*();' "$target"; then
+                echo "::error::ksu_init_symbol_resolver call still remains in $target"
                 exit 1
               fi
 
-              echo "✅ Removed ksu_init_symbol_resolver from $target"
+              echo "✅ Removed ksu_init_symbol_resolver call from $target"
             fi
           done
 
@@ -1401,7 +1426,6 @@ runs:
           #
           # CONFIG_KSU_SUSFS_SPOOF_UNAME=n is already set, but some
           # SukiSU/SUSFS Kbuild combinations still compile uts_spoof.o.
-          # That causes unresolved find_kernel_symbol_exact.
           # --------------------------------------------------------------
 
           for kbuild in \
@@ -1421,10 +1445,8 @@ runs:
           done
 
           # --------------------------------------------------------------
-          # Neutralize ksu_patch_text() in selinux_hide.c.
-          #
-          # Your SukiSU tree does not provide ksu_patch_text, so leave the
-          # rest of selinux_hide intact but remove the missing call.
+          # Neutralize direct ksu_patch_text() calls in selinux_hide.c only.
+          # Do not remove valid patch_memory declarations/definitions.
           # --------------------------------------------------------------
 
           for target in \
@@ -1434,27 +1456,60 @@ runs:
             if [ -f "$target" ]; then
               perl -0pi -e 's/\bret\s*=\s*ksu_patch_text\s*\([^;]*\);/ret = 0;/g' "$target"
 
-              if grep -n 'ksu_patch_text' "$target"; then
-                echo "::error::ksu_patch_text still remains in $target"
+              if grep -n 'ksu_patch_text\s*(' "$target"; then
+                echo "::error::ksu_patch_text call still remains in $target"
                 exit 1
               fi
 
-              echo "✅ Neutralized ksu_patch_text references in $target"
+              echo "✅ Neutralized ksu_patch_text calls in $target"
             fi
           done
 
           # --------------------------------------------------------------
-          # Final verification
+          # Remove uts_spoof.c entirely after disabling it.
+          # This prevents stale build logic from picking it up.
           # --------------------------------------------------------------
 
-          if [ -d "$COMMON_KERNEL_FOLDER/drivers/kernelsu" ]; then
-            if grep -RnsE 'find_kernel_symbol_exact|ksu_patch_text|ksu_init_symbol_resolver' \
-              "$COMMON_KERNEL_FOLDER/drivers/kernelsu" \
-              --include='*.c' --include='*.h' 2>/dev/null; then
-              echo "::error::Unsupported SukiSU/SUSFS linker symbols still remain"
-              exit 1
+          for target in \
+            "$KSU_FOLDER/kernel/feature/uts_spoof.c" \
+            "$COMMON_KERNEL_FOLDER/drivers/kernelsu/feature/uts_spoof.c"; do
+
+            if [ -f "$target" ]; then
+              mv "$target" "$target.disabled" || true
+              echo "✅ Disabled $target"
             fi
-          fi
+          done
+
+          # --------------------------------------------------------------
+          # Final targeted verification.
+          #
+          # Do not grep the whole tree for resolver/patch-memory symbols,
+          # because definitions in infra/ and hook/ are valid.
+          # --------------------------------------------------------------
+
+          for target in \
+            "$COMMON_KERNEL_FOLDER/drivers/kernelsu/core/init.c" \
+            "$COMMON_KERNEL_FOLDER/drivers/kernelsu/feature/selinux_hide.c"; do
+
+            if [ -f "$target" ]; then
+              if grep -nE 'ksu_init_symbol_resolver\s*\(\s*\)|ksu_patch_text\s*\(' "$target"; then
+                echo "::error::Unsupported call still remains in $target"
+                exit 1
+              fi
+            fi
+          done
+
+          for kbuild in \
+            "$COMMON_KERNEL_FOLDER/drivers/kernelsu/Makefile" \
+            "$COMMON_KERNEL_FOLDER/drivers/kernelsu/Kbuild"; do
+
+            if [ -f "$kbuild" ]; then
+              if grep -nE 'uts_spoof\.o|feature/uts_spoof\.o' "$kbuild"; then
+                echo "::error::uts_spoof.o is still enabled in $kbuild"
+                exit 1
+              fi
+            fi
+          done
 
           echo "✅ SukiSU linker-symbol compatibility cleanup completed"
         }
@@ -1847,16 +1902,37 @@ runs:
         # ------------------------------------------------------------------
 
         if [ "$KSU_TYPE" = "SUKISU" ]; then
-          echo "Running final SukiSU safety sweep for unsupported linker symbols..."
+          echo "Running final SukiSU targeted safety sweep..."
 
-          if grep -RnsE 'ksu_late_loaded|find_kernel_symbol_exact|ksu_patch_text|ksu_init_symbol_resolver' \
-            drivers/kernelsu \
-            --include='*.c' --include='*.h' 2>/dev/null; then
-            echo "::error::Unsupported SukiSU/SUSFS symbols still exist after cleanup"
-            exit 1
+          if [ -f drivers/kernelsu/core/init.c ]; then
+            if grep -n 'ksu_init_symbol_resolver\s*();' drivers/kernelsu/core/init.c; then
+              echo "::error::ksu_init_symbol_resolver call still exists in drivers/kernelsu/core/init.c"
+              exit 1
+            fi
           fi
 
-          echo "✅ No unsupported SukiSU/SUSFS symbols remain in drivers/kernelsu"
+          if [ -f drivers/kernelsu/feature/selinux_hide.c ]; then
+            if grep -nE 'ksu_late_loaded|ksu_patch_text\s*\(' drivers/kernelsu/feature/selinux_hide.c; then
+              echo "::error::Unsupported SukiSU/SUSFS call still exists in drivers/kernelsu/feature/selinux_hide.c"
+              exit 1
+            fi
+          fi
+
+          if [ -f drivers/kernelsu/Kbuild ]; then
+            if grep -nE 'uts_spoof\.o|feature/uts_spoof\.o' drivers/kernelsu/Kbuild; then
+              echo "::error::uts_spoof.o is still enabled in drivers/kernelsu/Kbuild"
+              exit 1
+            fi
+          fi
+
+          if [ -f drivers/kernelsu/Makefile ]; then
+            if grep -nE 'uts_spoof\.o|feature/uts_spoof\.o' drivers/kernelsu/Makefile; then
+              echo "::error::uts_spoof.o is still enabled in drivers/kernelsu/Makefile"
+              exit 1
+            fi
+          fi
+
+          echo "✅ Final SukiSU targeted safety sweep passed"
         fi
 
         # ------------------------------------------------------------------
