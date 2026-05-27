@@ -1225,11 +1225,11 @@ runs:
 
           echo "Fixing SukiSU init file: $target"
 
-          sed -i '/ksu_lsm_hook_init\s*();/d' "$target" || true
+          sed -i '/ksu_lsm_hook_init[[:space:]]*();/d' "$target" || true
 
           sed -i \
-            -e 's/\bksu_syscall_hook_manager_init\s*(/ksu_syscall_hook_init(/g' \
-            -e 's/\bksu_syscall_hook_manager_exit\s*(/ksu_syscall_hook_exit(/g' \
+            -e 's/\bksu_syscall_hook_manager_init[[:space:]]*(/ksu_syscall_hook_init(/g' \
+            -e 's/\bksu_syscall_hook_manager_exit[[:space:]]*(/ksu_syscall_hook_exit(/g' \
             "$target" || true
 
           sed -i \
@@ -1242,13 +1242,13 @@ runs:
 
           if ! grep -Rqs '^[[:space:]]*\(void\|int\)[[:space:]]\+ksu_syscall_hook_init[[:space:]]*(' \
             "$root_dir" --include='*.c' 2>/dev/null; then
-            sed -i '/ksu_syscall_hook_init\s*();/d' "$target" || true
+            sed -i '/ksu_syscall_hook_init[[:space:]]*();/d' "$target" || true
             echo "  - Removed orphan ksu_syscall_hook_init() call"
           fi
 
           if ! grep -Rqs '^[[:space:]]*\(void\|int\)[[:space:]]\+ksu_syscall_hook_exit[[:space:]]*(' \
             "$root_dir" --include='*.c' 2>/dev/null; then
-            sed -i '/ksu_syscall_hook_exit\s*();/d' "$target" || true
+            sed -i '/ksu_syscall_hook_exit[[:space:]]*();/d' "$target" || true
             echo "  - Removed orphan ksu_syscall_hook_exit() call"
           fi
 
@@ -1409,9 +1409,10 @@ runs:
             "$COMMON_KERNEL_FOLDER/drivers/kernelsu/core/init.c"; do
 
             if [ -f "$target" ]; then
-              sed -i '/ksu_init_symbol_resolver\s*();/d' "$target" || true
+              perl -0pi -e 's/^[ \t]*ksu_init_symbol_resolver[ \t]*\([^;]*\);[ \t]*\n//mg' "$target"
+              sed -i '/ksu_init_symbol_resolver[[:space:]]*(/d' "$target" || true
 
-              if grep -n 'ksu_init_symbol_resolver\s*();' "$target"; then
+              if grep -nE 'ksu_init_symbol_resolver[[:space:]]*\(' "$target"; then
                 echo "::error::ksu_init_symbol_resolver call still remains in $target"
                 exit 1
               fi
@@ -1441,10 +1442,8 @@ runs:
           done
 
           # --------------------------------------------------------------
-          # Remove / neutralize remaining uts_spoof callers.
-          #
-          # Since CONFIG_KSU_SUSFS_SPOOF_UNAME=n, these calls must not remain
-          # after uts_spoof.o is disabled.
+          # Remove remaining ksu_spoof_version(...) callers from init.c.
+          # This fixes undefined symbol: ksu_spoof_version.
           # --------------------------------------------------------------
 
           for target in \
@@ -1452,9 +1451,12 @@ runs:
             "$COMMON_KERNEL_FOLDER/drivers/kernelsu/core/init.c"; do
 
             if [ -f "$target" ]; then
-              sed -i '/ksu_spoof_version\s*();/d' "$target" || true
+              perl -0pi -e 's/^[ \t]*ksu_spoof_version[ \t]*\([^;]*\);[ \t]*\n//mg' "$target"
 
-              if grep -n 'ksu_spoof_version\s*();' "$target"; then
+              # Extra fallback for any one-line direct call variant.
+              sed -i '/ksu_spoof_version[[:space:]]*(/d' "$target" || true
+
+              if grep -nE 'ksu_spoof_version[[:space:]]*\(' "$target"; then
                 echo "::error::ksu_spoof_version call still remains in $target"
                 exit 1
               fi
@@ -1463,15 +1465,20 @@ runs:
             fi
           done
 
+          # --------------------------------------------------------------
+          # Neutralize ksu_set_spoof_version(...) callers.
+          # This fixes undefined symbol: ksu_set_spoof_version.
+          # --------------------------------------------------------------
+
           for target in \
             "$KSU_FOLDER/kernel/supercall/dispatch.c" \
             "$COMMON_KERNEL_FOLDER/drivers/kernelsu/supercall/dispatch.c"; do
 
             if [ -f "$target" ]; then
-              perl -0pi -e 's/return\s+ksu_set_spoof_version\s*\([^;]*\);/return -EINVAL;/g' "$target"
-              perl -0pi -e 's/\bksu_set_spoof_version\s*\([^;]*\);/return -EINVAL;/g' "$target"
+              perl -0pi -e 's/return[ \t]+ksu_set_spoof_version[ \t]*\([^;]*\);/return -EINVAL;/g' "$target"
+              perl -0pi -e 's/^[ \t]*ksu_set_spoof_version[ \t]*\([^;]*\);[ \t]*$/return -EINVAL;/mg' "$target"
 
-              if grep -n 'ksu_set_spoof_version\s*(' "$target"; then
+              if grep -nE 'ksu_set_spoof_version[[:space:]]*\(' "$target"; then
                 echo "::error::ksu_set_spoof_version call still remains in $target"
                 exit 1
               fi
@@ -1490,9 +1497,9 @@ runs:
             "$COMMON_KERNEL_FOLDER/drivers/kernelsu/feature/selinux_hide.c"; do
 
             if [ -f "$target" ]; then
-              perl -0pi -e 's/\bret\s*=\s*ksu_patch_text\s*\([^;]*\);/ret = 0;/g' "$target"
+              perl -0pi -e 's/\bret[ \t]*=[ \t]*ksu_patch_text[ \t]*\([^;]*\);/ret = 0;/g' "$target"
 
-              if grep -n 'ksu_patch_text\s*(' "$target"; then
+              if grep -nE 'ksu_patch_text[[:space:]]*\(' "$target"; then
                 echo "::error::ksu_patch_text call still remains in $target"
                 exit 1
               fi
@@ -1502,8 +1509,7 @@ runs:
           done
 
           # --------------------------------------------------------------
-          # Remove uts_spoof.c entirely after disabling it.
-          # This prevents stale build logic from picking it up.
+          # Disable uts_spoof.c source after removing it from Kbuild.
           # --------------------------------------------------------------
 
           for target in \
@@ -1518,9 +1524,6 @@ runs:
 
           # --------------------------------------------------------------
           # Final targeted verification.
-          #
-          # Do not grep the whole tree for resolver/patch-memory symbols,
-          # because definitions in infra/ and hook/ are valid.
           # --------------------------------------------------------------
 
           for target in \
@@ -1529,8 +1532,8 @@ runs:
             "$COMMON_KERNEL_FOLDER/drivers/kernelsu/supercall/dispatch.c"; do
 
             if [ -f "$target" ]; then
-              if grep -nE 'ksu_init_symbol_resolver\s*\(\s*\)|ksu_patch_text\s*\(|ksu_spoof_version\s*\(\s*\)|ksu_set_spoof_version\s*\(' "$target"; then
-                echo "::error::Unsupported call still remains in $target"
+              if grep -nE 'ksu_init_symbol_resolver[[:space:]]*\(|ksu_patch_text[[:space:]]*\(|ksu_spoof_version[[:space:]]*\(|ksu_set_spoof_version[[:space:]]*\(' "$target"; then
+                echo "::error::Unsupported SukiSU/SUSFS call still remains in $target"
                 exit 1
               fi
             fi
@@ -1942,21 +1945,21 @@ runs:
           echo "Running final SukiSU targeted safety sweep..."
 
           if [ -f drivers/kernelsu/core/init.c ]; then
-            if grep -nE 'ksu_init_symbol_resolver\s*\(\s*\)|ksu_spoof_version\s*\(\s*\)' drivers/kernelsu/core/init.c; then
+            if grep -nE 'ksu_init_symbol_resolver[[:space:]]*\(|ksu_spoof_version[[:space:]]*\(' drivers/kernelsu/core/init.c; then
               echo "::error::Unsupported SukiSU call still exists in drivers/kernelsu/core/init.c"
               exit 1
             fi
           fi
 
           if [ -f drivers/kernelsu/feature/selinux_hide.c ]; then
-            if grep -nE 'ksu_late_loaded|ksu_patch_text\s*\(' drivers/kernelsu/feature/selinux_hide.c; then
+            if grep -nE 'ksu_late_loaded|ksu_patch_text[[:space:]]*\(' drivers/kernelsu/feature/selinux_hide.c; then
               echo "::error::Unsupported SukiSU/SUSFS call still exists in drivers/kernelsu/feature/selinux_hide.c"
               exit 1
             fi
           fi
 
           if [ -f drivers/kernelsu/supercall/dispatch.c ]; then
-            if grep -n 'ksu_set_spoof_version\s*(' drivers/kernelsu/supercall/dispatch.c; then
+            if grep -nE 'ksu_set_spoof_version[[:space:]]*\(' drivers/kernelsu/supercall/dispatch.c; then
               echo "::error::ksu_set_spoof_version call still exists in drivers/kernelsu/supercall/dispatch.c"
               exit 1
             fi
