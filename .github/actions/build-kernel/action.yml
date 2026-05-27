@@ -1452,8 +1452,6 @@ runs:
 
             if [ -f "$target" ]; then
               perl -0pi -e 's/^[ \t]*ksu_spoof_version[ \t]*\([^;]*\);[ \t]*\n//mg' "$target"
-
-              # Extra fallback for any one-line direct call variant.
               sed -i '/ksu_spoof_version[[:space:]]*(/d' "$target" || true
 
               if grep -nE 'ksu_spoof_version[[:space:]]*\(' "$target"; then
@@ -1489,7 +1487,15 @@ runs:
 
           # --------------------------------------------------------------
           # Neutralize direct ksu_patch_text() calls in selinux_hide.c only.
-          # Do not remove valid patch_memory declarations/definitions.
+          #
+          # Handles both forms:
+          #   ret = ksu_patch_text(...);
+          #   ksu_patch_text(...);
+          #
+          # Do not remove valid declarations/definitions from:
+          # - hook/patch_memory.h
+          # - hook/arm64/patch_memory.c
+          # - hook/x86_64/patch_memory.c
           # --------------------------------------------------------------
 
           for target in \
@@ -1497,7 +1503,16 @@ runs:
             "$COMMON_KERNEL_FOLDER/drivers/kernelsu/feature/selinux_hide.c"; do
 
             if [ -f "$target" ]; then
+              # Assignment form:
+              #   ret = ksu_patch_text(...);
               perl -0pi -e 's/\bret[ \t]*=[ \t]*ksu_patch_text[ \t]*\([^;]*\);/ret = 0;/g' "$target"
+
+              # Standalone form:
+              #   ksu_patch_text(...);
+              perl -0pi -e 's/^[ \t]*ksu_patch_text[ \t]*\([^;]*\);[ \t]*\n//mg' "$target"
+
+              # Extra fallback for one-line standalone calls.
+              sed -i '/^[[:space:]]*ksu_patch_text[[:space:]]*(.*);[[:space:]]*$/d' "$target" || true
 
               if grep -nE 'ksu_patch_text[[:space:]]*\(' "$target"; then
                 echo "::error::ksu_patch_text call still remains in $target"
@@ -1695,10 +1710,6 @@ runs:
             fix_sukisu_selinux_hide_c "drivers/kernelsu/feature/selinux_hide.c"
             fix_sukisu_linker_symbols
 
-            # --------------------------------------------------------------
-            # Copy SukiSU helper headers / uapi
-            # --------------------------------------------------------------
-
             mkdir -p drivers/kernelsu/kpm/uapi include/uapi
 
             cp "$KERNEL_PLATFORM_FOLDER/KernelSU/uapi/"*.h \
@@ -1721,10 +1732,6 @@ runs:
                 cp "$KLOG_SRC" "$dest/" 2>/dev/null || true
               done
             fi
-
-            # --------------------------------------------------------------
-            # Kbuild include fixes
-            # --------------------------------------------------------------
 
             if [ -f drivers/kernelsu/Kbuild ]; then
               grep -q 'srctree)/$(src)' drivers/kernelsu/Kbuild || \
