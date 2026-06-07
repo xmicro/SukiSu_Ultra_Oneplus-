@@ -1092,8 +1092,6 @@ runs:
             -e 's/\bksu_late_loaded\b/0/g' \
             "$target" || true
 
-          # Fix Clang -Wpointer-bool-conversion warnings:
-          # These symbols are functions in this tree, not nullable function pointers.
           perl -0pi -e 's/if[ \t]*\([ \t]*security_dump_masked_av_fn[ \t]*\)/if (\&security_dump_masked_av_fn)/g' "$target" || true
           perl -0pi -e 's/if[ \t]*\([ \t]*context_struct_compute_av_fn[ \t]*\)/if (\&context_struct_compute_av_fn)/g' "$target" || true
 
@@ -1360,6 +1358,8 @@ runs:
           handled_rejects=0
 
           if [ -f mm/memory.c.rej ] && grep -q 'CONFIG_KSU_SUSFS_SUS_MAP' mm/memory.c.rej; then
+            echo "Handling known SUSFS mm/memory.c include reject..."
+
             if grep -q '#include <linux/susfs_def.h>' mm/memory.c; then
               echo "SUSFS header already present in mm/memory.c"
             elif grep -q '#include <linux/vmalloc.h>' mm/memory.c; then
@@ -1374,6 +1374,87 @@ runs:
 
             rm -f mm/memory.c.rej
             handled_rejects=1
+          fi
+
+          if [ -f fs/proc/task_mmu.c.rej ] && grep -q 'CONFIG_KSU_SUSFS_SUS_MAP' fs/proc/task_mmu.c.rej; then
+            echo "Handling known SUSFS fs/proc/task_mmu.c show_smaps_rollup reject..."
+
+            if grep -q 'SUSFS_IS_INODE_SUS_MAP(file_inode(vma->vm_file))' fs/proc/task_mmu.c; then
+              echo "SUSFS show_smaps_rollup logic already present in task_mmu.c"
+              rm -f fs/proc/task_mmu.c.rej
+              handled_rejects=1
+            else
+              cat > /tmp/patch_susfs_task_mmu.py <<'PYEOF'
+              from pathlib import Path
+              import re
+              import sys
+              
+              path = Path("fs/proc/task_mmu.c")
+              
+              if not path.exists():
+                  print("::error::fs/proc/task_mmu.c does not exist")
+                  sys.exit(1)
+              
+              text = path.read_text()
+              
+              function_match = re.search(
+                  r"static\s+int\s+show_smaps_rollup\s*\([^)]*\)\s*\{",
+                  text,
+              )
+              
+              if not function_match:
+                  print("::error::Could not find show_smaps_rollup() in fs/proc/task_mmu.c")
+                  sys.exit(1)
+              
+              start = function_match.start()
+              tail = text[start:]
+              
+              target_pattern = re.compile(
+                  r"(?P<indent>[ \t]+)smap_gather_stats\(vma,\s*&mss,\s*last_vma_end\);\n"
+                  r"(?P=indent)last_vma_end\s*=\s*vma->vm_end;",
+              )
+              
+              match = target_pattern.search(tail)
+              
+              if not match:
+                  print("::error::Could not find target smap_gather_stats block inside show_smaps_rollup()")
+                  sys.exit(1)
+              
+              indent = match.group("indent")
+              
+              replacement = (
+                  f"#ifdef CONFIG_KSU_SUSFS_SUS_MAP\n"
+                  f"{indent}if (!vma->vm_file || !(SUSFS_IS_INODE_SUS_MAP(file_inode(vma->vm_file)))) {{\n"
+                  f"{indent}\tsmap_gather_stats(vma, &mss, last_vma_end);\n"
+                  f"{indent}\tlast_vma_end = vma->vm_end;\n"
+                  f"{indent}}}\n"
+                  f"#else\n"
+                  f"{indent}smap_gather_stats(vma, &mss, last_vma_end);\n"
+                  f"{indent}last_vma_end = vma->vm_end;\n"
+                  f"#endif // #ifdef CONFIG_KSU_SUSFS_SUS_MAP"
+              )
+              
+              absolute_start = start + match.start()
+              absolute_end = start + match.end()
+              
+              new_text = text[:absolute_start] + replacement + text[absolute_end:]
+              
+              path.write_text(new_text)
+              
+              print("✅ Applied SUSFS show_smaps_rollup fallback patch")
+              PYEOF
+
+              python3 /tmp/patch_susfs_task_mmu.py
+
+              if ! grep -q 'SUSFS_IS_INODE_SUS_MAP(file_inode(vma->vm_file))' fs/proc/task_mmu.c; then
+                echo "::error::Fallback patch did not modify fs/proc/task_mmu.c correctly"
+                cat fs/proc/task_mmu.c.rej
+                exit 1
+              fi
+
+              rm -f fs/proc/task_mmu.c.rej
+              handled_rejects=1
+            fi
           fi
 
           if [ -n "$(find . -name "*.rej" -print -quit)" ]; then
