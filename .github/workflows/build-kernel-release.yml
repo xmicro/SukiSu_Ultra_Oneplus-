@@ -979,10 +979,31 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: 🔎 Debug tag target commit
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          echo "HEAD commit:"
+          git rev-parse HEAD
+
+          echo ""
+          echo "Files changed in HEAD:"
+          git show --name-only --oneline --no-renames HEAD
+
+          echo ""
+          if git show --name-only --oneline --no-renames HEAD | grep -q '^\.github/workflows/'; then
+            echo "::warning::HEAD modifies a workflow file. GITHUB_TOKEN may be blocked from creating a tag on this commit."
+            echo "::warning::Create one extra non-workflow commit, then rerun the workflow."
+          fi
+
       - name: 🏷️ Generate and Create New Tag
         shell: bash
         run: |
           set -euo pipefail
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
           LATEST_MATCHING_TAG="$(
             {
@@ -990,10 +1011,10 @@ jobs:
                 --jq '.[] | .name' \
                 | grep -E "^${SUSFS_BASE_VERSION}-r[0-9]+$" || true
             } \
-              | awk -F'-r' 'NF >= 2 {print $0 "\t" $2}' \
-              | sort -k2,2n \
-              | tail -n1 \
-              | cut -f1
+            | awk -F'-r' 'NF >= 2 {print $0 "\t" $2}' \
+            | sort -k2,2n \
+            | tail -n1 \
+            | cut -f1
           )"
 
           if [ -z "$LATEST_MATCHING_TAG" ]; then
@@ -1005,6 +1026,16 @@ jobs:
           echo "New tag: $NEW_TAG"
           echo "NEW_TAG=${NEW_TAG}" >> "$GITHUB_ENV"
 
+          if git rev-parse "$NEW_TAG" >/dev/null 2>&1; then
+            echo "::error::Local tag already exists: $NEW_TAG"
+            exit 1
+          fi
+
+          if git ls-remote --exit-code --tags origin "refs/tags/$NEW_TAG" >/dev/null 2>&1; then
+            echo "::error::Remote tag already exists: $NEW_TAG"
+            exit 1
+          fi
+
           git tag "$NEW_TAG"
           git push origin "$NEW_TAG"
 
@@ -1015,20 +1046,36 @@ jobs:
           merge-multiple: true
           skip-decompress: true
 
+      - name: 🔎 Inspect downloaded artifacts
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          echo "Downloaded artifacts tree:"
+          find ./downloaded-artifacts -maxdepth 3 -type f -print | sort || true
+
+          echo ""
+          echo "ZIP files:"
+          find ./downloaded-artifacts -maxdepth 3 -type f -name "*.zip" -print | sort || true
+
       - name: 🔐 Generate Checksums
         shell: bash
         run: |
           set -euo pipefail
 
-          if ! compgen -G "./downloaded-artifacts/*.zip" > /dev/null; then
+          mapfile -t zip_files < <(find ./downloaded-artifacts -maxdepth 3 -type f -name "*.zip" | sort)
+
+          if [ "${#zip_files[@]}" -eq 0 ]; then
             echo "::error::No ZIP artifacts found."
-            find ./downloaded-artifacts -maxdepth 2 -type f -print || true
+            find ./downloaded-artifacts -maxdepth 3 -type f -print || true
             exit 1
           fi
 
-          cd downloaded-artifacts
-          sha256sum *.zip | sort -k2 > ../00_CHECKSUMS.txt
-          cd ..
+          : > 00_CHECKSUMS.txt
+
+          for zip in "${zip_files[@]}"; do
+            sha256sum "$zip"
+          done | sort -k2 > 00_CHECKSUMS.txt
 
           echo "Generated 00_CHECKSUMS.txt:"
           cat 00_CHECKSUMS.txt
@@ -1062,7 +1109,7 @@ jobs:
           } > 00_DOWNLOADS.md
 
           for os in OOS16 OOS15 OOS14; do
-            mapfile -t files < <(find downloaded-artifacts -maxdepth 1 -type f -name "*_${os}_*.zip" | sort)
+            mapfile -t files < <(find downloaded-artifacts -maxdepth 3 -type f -name "*_${os}_*.zip" | sort)
 
             if [ "${#files[@]}" -eq 0 ]; then
               continue
@@ -1128,33 +1175,41 @@ jobs:
 
           declare -A device_info
 
-          JSON_BUILD_DATA="$(jq -c '.' ./downloaded-artifacts/matrix.json)"
+          MATRIX_JSON="$(find ./downloaded-artifacts -maxdepth 3 -type f -name "matrix.json" | head -n1 || true)"
 
-          for file in $(find downloaded-artifacts -maxdepth 1 -name "*.zip" -type f | sort); do
-            if [ -f "$file" ]; then
-              zipname="$(basename "$file" .zip)"
-              rest="${zipname#AK3_}"
+          if [ -z "$MATRIX_JSON" ]; then
+            echo "::warning::matrix.json not found in downloaded artifacts. Continuing without matrix metadata."
+            JSON_BUILD_DATA="[]"
+          else
+            echo "Using matrix file: $MATRIX_JSON"
+            JSON_BUILD_DATA="$(jq -c '.' "$MATRIX_JSON")"
+          fi
 
-              IFS='_' read -ra parts <<< "$rest"
+          while IFS= read -r file; do
+            [ -z "$file" ] && continue
 
-              model="${parts[0]:-unknown}"
-              os_version="${parts[1]:-unknown}"
-              kernel_version="${parts[2]:-unknown}"
-              ksu_type_asset="${parts[3]:-unknown}"
-              ksu_ver="${parts[4]:-unknown}"
+            zipname="$(basename "$file" .zip)"
+            rest="${zipname#AK3_}"
 
-              if [ "${parts[5]:-}" = "SuSFS" ]; then
-                susfs_ver="${parts[6]:-unknown}"
-              else
-                susfs_ver="none"
-              fi
+            IFS='_' read -ra parts <<< "$rest"
 
-              file_name="$(basename "$file")"
-              full_model="${model}_${os_version}_${kernel_version}"
+            model="${parts[0]:-unknown}"
+            os_version="${parts[1]:-unknown}"
+            kernel_version="${parts[2]:-unknown}"
+            ksu_type_asset="${parts[3]:-unknown}"
+            ksu_ver="${parts[4]:-unknown}"
 
-              device_info["$full_model"]="$model|$os_version|$kernel_version|$ksu_type_asset|$ksu_ver|$susfs_ver|$file_name"
+            if [ "${parts[5]:-}" = "SuSFS" ]; then
+              susfs_ver="${parts[6]:-unknown}"
+            else
+              susfs_ver="none"
             fi
-          done
+
+            file_name="$(basename "$file")"
+            full_model="${model}_${os_version}_${kernel_version}"
+
+            device_info["$full_model"]="$model|$os_version|$kernel_version|$ksu_type_asset|$ksu_ver|$susfs_ver|$file_name"
+          done < <(find downloaded-artifacts -maxdepth 3 -name "*.zip" -type f | sort)
 
           if [ "${#device_info[@]}" -eq 0 ]; then
             echo "::error::No device ZIPs found!"
@@ -1382,7 +1437,7 @@ jobs:
 
           ---
 
-          **⚡ Built with ❤️ by the community**
+          **⚡ Built with passion**
           EOF
 
           echo "--- Final Release Notes ---"
@@ -1409,11 +1464,18 @@ jobs:
           gh release upload "${{ env.NEW_TAG }}" 00_CHECKSUMS.txt --clobber --repo "${{ env.REPO_OWNER }}/${{ env.REPO_NAME }}"
 
           echo "Uploading kernel ZIPs..."
-          for file in ./downloaded-artifacts/*.zip; do
-            if [ -f "$file" ]; then
-              echo "Uploading $file..."
-              gh release upload "${{ env.NEW_TAG }}" "$file" --clobber --repo "${{ env.REPO_OWNER }}/${{ env.REPO_NAME }}"
-            fi
+
+          mapfile -t zip_files < <(find ./downloaded-artifacts -maxdepth 3 -type f -name "*.zip" | sort)
+
+          if [ "${#zip_files[@]}" -eq 0 ]; then
+            echo "::error::No ZIP files found for upload."
+            find ./downloaded-artifacts -maxdepth 3 -type f -print || true
+            exit 1
+          fi
+
+          for file in "${zip_files[@]}"; do
+            echo "Uploading $file..."
+            gh release upload "${{ env.NEW_TAG }}" "$file" --clobber --repo "${{ env.REPO_OWNER }}/${{ env.REPO_NAME }}"
           done
 
       - name: 📊 Release summary
@@ -1422,7 +1484,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          kernel_count="$(find ./downloaded-artifacts -maxdepth 1 -name "*.zip" -type f | wc -l)"
+          kernel_count="$(find ./downloaded-artifacts -maxdepth 3 -name "*.zip" -type f | wc -l)"
 
           cat >> "$GITHUB_STEP_SUMMARY" << EOF
 
@@ -1445,11 +1507,12 @@ jobs:
           echo "- \`00_DOWNLOADS.md\`" >> "$GITHUB_STEP_SUMMARY"
           echo "- \`00_CHECKSUMS.txt\`" >> "$GITHUB_STEP_SUMMARY"
 
-          for zip in ./downloaded-artifacts/*.zip; do
-            if [ -f "$zip" ]; then
-              name="$(basename "$zip")"
-              size="$(stat -c%s "$zip")"
-              size_mb="$(echo "scale=2; $size / 1024 / 1024" | bc)"
-              echo "- \`$name\` (${size_mb} MB)" >> "$GITHUB_STEP_SUMMARY"
-            fi
-          done
+          while IFS= read -r zip; do
+            [ -z "$zip" ] && continue
+
+            name="$(basename "$zip")"
+            size="$(stat -c%s "$zip")"
+            size_mb="$(echo "scale=2; $size / 1024 / 1024" | bc)"
+
+            echo "- \`$name\` (${size_mb} MB)" >> "$GITHUB_STEP_SUMMARY"
+          done < <(find ./downloaded-artifacts -maxdepth 3 -name "*.zip" -type f | sort)
