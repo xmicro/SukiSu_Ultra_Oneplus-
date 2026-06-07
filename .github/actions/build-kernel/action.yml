@@ -1384,67 +1384,65 @@ runs:
               rm -f fs/proc/task_mmu.c.rej
               handled_rejects=1
             else
-              cat > /tmp/patch_susfs_task_mmu.py <<'PYEOF'
-                from pathlib import Path
-                import re
-                import sys
-                
-                path = Path("fs/proc/task_mmu.c")
-                
-                if not path.exists():
-                    print("::error::fs/proc/task_mmu.c does not exist")
-                    sys.exit(1)
-                
-                text = path.read_text()
-                
-                function_match = re.search(
-                    r"static\s+int\s+show_smaps_rollup\s*\([^)]*\)\s*\{",
-                    text,
-                )
-                
-                if not function_match:
-                    print("::error::Could not find show_smaps_rollup() in fs/proc/task_mmu.c")
-                    sys.exit(1)
-                
-                start = function_match.start()
-                tail = text[start:]
-                
-                target_pattern = re.compile(
-                    r"(?P<indent>[ \t]+)smap_gather_stats\(vma,\s*&mss,\s*last_vma_end\);\n"
-                    r"(?P=indent)last_vma_end\s*=\s*vma->vm_end;",
-                )
-                
-                match = target_pattern.search(tail)
-                
-                if not match:
-                    print("::error::Could not find target smap_gather_stats block inside show_smaps_rollup()")
-                    sys.exit(1)
-                
-                indent = match.group("indent")
-                
-                replacement = (
-                    f"#ifdef CONFIG_KSU_SUSFS_SUS_MAP\n"
-                    f"{indent}if (!vma->vm_file || !(SUSFS_IS_INODE_SUS_MAP(file_inode(vma->vm_file)))) {{\n"
-                    f"{indent}\tsmap_gather_stats(vma, &mss, last_vma_end);\n"
-                    f"{indent}\tlast_vma_end = vma->vm_end;\n"
-                    f"{indent}}}\n"
-                    f"#else\n"
-                    f"{indent}smap_gather_stats(vma, &mss, last_vma_end);\n"
-                    f"{indent}last_vma_end = vma->vm_end;\n"
-                    f"#endif // #ifdef CONFIG_KSU_SUSFS_SUS_MAP"
-                )
-                
-                absolute_start = start + match.start()
-                absolute_end = start + match.end()
-                
-                new_text = text[:absolute_start] + replacement + text[absolute_end:]
-                
-                path.write_text(new_text)
-                
-                print("✅ Applied SUSFS show_smaps_rollup fallback patch")
-                PYEOF
+              python3 -c 'import textwrap; exec(textwrap.dedent("""
+              from pathlib import Path
+              import re
+              import sys
 
-              python3 /tmp/patch_susfs_task_mmu.py
+              path = Path("fs/proc/task_mmu.c")
+
+              if not path.exists():
+                  print("::error::fs/proc/task_mmu.c does not exist")
+                  sys.exit(1)
+
+              text = path.read_text()
+
+              function_match = re.search(
+                  r"static\\s+int\\s+show_smaps_rollup\\s*\\([^)]*\\)\\s*\\{",
+                  text,
+              )
+
+              if not function_match:
+                  print("::error::Could not find show_smaps_rollup() in fs/proc/task_mmu.c")
+                  sys.exit(1)
+
+              start = function_match.start()
+              tail = text[start:]
+
+              target_pattern = re.compile(
+                  r"(?P<indent>[ \\t]+)smap_gather_stats\\(vma,\\s*&mss,\\s*last_vma_end\\);\\n"
+                  r"(?P=indent)last_vma_end\\s*=\\s*vma->vm_end;",
+              )
+
+              match = target_pattern.search(tail)
+
+              if not match:
+                  print("::error::Could not find target smap_gather_stats block inside show_smaps_rollup()")
+                  sys.exit(1)
+
+              indent = match.group("indent")
+
+              replacement = (
+                  "#ifdef CONFIG_KSU_SUSFS_SUS_MAP\\n"
+                  + indent + "if (!vma->vm_file || !(SUSFS_IS_INODE_SUS_MAP(file_inode(vma->vm_file)))) {\\n"
+                  + indent + "\\tsmap_gather_stats(vma, &mss, last_vma_end);\\n"
+                  + indent + "\\tlast_vma_end = vma->vm_end;\\n"
+                  + indent + "}\\n"
+                  + "#else\\n"
+                  + indent + "smap_gather_stats(vma, &mss, last_vma_end);\\n"
+                  + indent + "last_vma_end = vma->vm_end;\\n"
+                  + "#endif // #ifdef CONFIG_KSU_SUSFS_SUS_MAP"
+              )
+
+              absolute_start = start + match.start()
+              absolute_end = start + match.end()
+
+              new_text = text[:absolute_start] + replacement + text[absolute_end:]
+
+              path.write_text(new_text)
+
+              print("✅ Applied SUSFS show_smaps_rollup fallback patch")
+              """))'
 
               if ! grep -q 'SUSFS_IS_INODE_SUS_MAP(file_inode(vma->vm_file))' fs/proc/task_mmu.c; then
                 echo "::error::Fallback patch did not modify fs/proc/task_mmu.c correctly"
