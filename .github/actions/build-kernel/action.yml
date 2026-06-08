@@ -1097,7 +1097,6 @@ runs:
         CONFIG_KSU=y
         CONFIG_KSU_MULTI_MANAGER_SUPPORT=y
         CONFIG_KSU_FULL_NAME_FORMAT="%TAG_NAME%-⚡Ultra⚡@ReSukiSU"
-        CONFIG_KPM=y
         EOF
 
         echo "RSKSU" >> "${ARTIFACTS_FOLDER}/${OP_MODEL}_${OP_OS_VERSION}.txt"
