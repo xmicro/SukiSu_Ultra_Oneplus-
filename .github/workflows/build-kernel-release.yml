@@ -69,7 +69,7 @@ on:
         default: false
 
       mirror_toolchains:
-        description: 'Do you want to sync toolchains before build? [99% runs not required]'
+        description: 'Do you want to sync toolchains before build? [required for the 1st run]'
         required: false
         type: boolean
         default: false
