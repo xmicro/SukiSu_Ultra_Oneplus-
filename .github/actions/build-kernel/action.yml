@@ -2620,6 +2620,7 @@ runs:
 
     - name: Upload Debug Artifacts
       if: ${{ always() && !cancelled() && inputs.debug == 'true' }}
+      continue-on-error: true
       uses: actions/upload-artifact@v7
       with:
         name: ${{ env.DEBUG_ZIP_NAME }}
@@ -2628,22 +2629,21 @@ runs:
         retention-days: 90
 
     - name: Upload Artifacts
-      if: ${{ success() && steps.create_zip.conclusion == 'success' }}
+      if: ${{ steps.create_zip.conclusion == 'success' }}
       uses: actions/upload-artifact@v7
       with:
         name: ${{ env.ZIP_NAME }}
         path: ${{ env.ARTIFACTS_FOLDER }}/${{ env.ZIP_NAME }}
-        archive: false
         compression-level: 0
         retention-days: 90
 
     - name: Upload ccache log
-      if: ${{ success() && inputs.debug == 'true' && steps.build_kernel_step.conclusion == 'success' }}
+      if: ${{ always() && inputs.debug == 'true' && steps.build_kernel_step.conclusion == 'success' }}
+      continue-on-error: true
       uses: actions/upload-artifact@v7
       with:
         name: "${{ env.OP_MODEL }}_${{ env.OP_OS_VERSION }}_${{ env.KERNEL_FULL_VER }}_ccache.log"
         path: ${{ env.CCACHE_LOGFILE }}
-        archive: false
         compression-level: 0
         retention-days: 90
 
@@ -2681,6 +2681,7 @@ runs:
 
     - name: Save ccache cache
       if: ${{ always() && steps.build_kernel_step.conclusion == 'success' }}
+      continue-on-error: true
       uses: ./action-source/.github/actions/cache/save
       with:
         cache_path: ${{ env.CCACHE_DIR }}
@@ -2691,8 +2692,28 @@ runs:
         working_dir: "./main-source"
         compression_level: 6
 
+    - name: Trim LTO LD cache before saving
+      if: ${{ always() && env.OP_LTO != 'none' && steps.build_kernel_step.conclusion == 'success' }}
+      continue-on-error: true
+      shell: bash
+      run: |
+        set -euo pipefail
+
+        if [ -d "$LDCACHE_DIR" ]; then
+          echo "LTO cache size before trim:"
+          du -sh "$LDCACHE_DIR" || true
+
+          find "$LDCACHE_DIR" -type f -mmin +360 -delete || true
+
+          echo "LTO cache size after trim:"
+          du -sh "$LDCACHE_DIR" || true
+        else
+          echo "No LTO cache directory found"
+        fi
+
     - name: Save LTO LD cache
       if: ${{ always() && env.OP_LTO != 'none' && steps.build_kernel_step.conclusion == 'success' }}
+      continue-on-error: true
       uses: ./action-source/.github/actions/cache/save
       with:
         cache_path: ${{ env.LDCACHE_DIR }}
