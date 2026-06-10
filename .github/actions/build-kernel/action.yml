@@ -1181,13 +1181,16 @@ runs:
           "kernel/core/init.c.rej"
           "kernel/feature/selinux_hide.c.rej"
           "kernel/runtime/boot_event.c.rej"
+          "kernel/supercall/dispatch.c.rej"
         )
 
         if [ -n "$(find . -name '*.rej' -print -quit)" ]; then
-          find . -name '*.rej' -print
+          echo "KernelSU patch produced reject files:"
+          find . -name '*.rej' -exec echo "=== {} ===" \; -exec cat {} \;
 
           for rej in "${EXPECTED_SUKISU_REJECTS[@]}"; do
             if [ -f "$rej" ]; then
+              echo "Removing expected SukiSU/SUSFS reject: $rej"
               rm -f "$rej"
             fi
           done
@@ -1195,7 +1198,7 @@ runs:
 
         if [ -n "$(find . -name '*.rej' -print -quit)" ]; then
           echo "::error::Unexpected KernelSU-side .rej files remain:"
-          find . -name '*.rej' -print
+          find . -name '*.rej' -exec echo "=== {} ===" \; -exec cat {} \;
           exit 1
         fi
 
@@ -1347,10 +1350,17 @@ runs:
           cp -a "$SELINUXFS_PATH" "$SELINUXFS_BACKUP"
         fi
 
-        SUSFS_PATCH="$SUSFS_FOLDER/kernel_patches/50_add_susfs_in_${SUSFS_KERNEL_BRANCH_LOCAL}.patch"
+        SUSFS_BRANCH_LOCAL="${SUSFS_KERNEL_BRANCH_LOCAL:-${SUSFS_KERNEL_BRANCH:-gki-${ANDROID_VER_LOCAL}-${KERNEL_VER_LOCAL}}}"
+
+        SUSFS_PATCH="$SUSFS_FOLDER/kernel_patches/50_add_susfs_in_${SUSFS_BRANCH_LOCAL}.patch"
+
+        echo "Using SUSFS kernel patch branch: $SUSFS_BRANCH_LOCAL"
+        echo "Using SUSFS kernel patch file: $SUSFS_PATCH"
 
         if [ ! -f "$SUSFS_PATCH" ]; then
           echo "::error::SUSFS patch not found: $SUSFS_PATCH"
+          echo "Available SUSFS patches:"
+          find "$SUSFS_FOLDER/kernel_patches" -maxdepth 1 -type f -name '50_add_susfs_in_*.patch' -print | sort
           exit 1
         fi
 
