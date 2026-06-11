@@ -924,7 +924,7 @@ runs:
         echo "✅ SukiSU Ultra added commit: ${KSU_COMMIT_SHA:0:8}"
         echo "::endgroup::"
 
-        - name: Apply SUSFS Patches
+    - name: Apply SUSFS Patches
       shell: bash
       if: ${{ env.OP_SUSFS == 'true' }}
       env:
