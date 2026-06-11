@@ -1164,53 +1164,55 @@ runs:
 
           echo "Fixing SukiSU app_profile compatibility in: $target"
 
-          python3 - "$target" <<'PY'
-          from pathlib import Path
-            import re
-            import sys
-            
-            path = Path(sys.argv[1])
-            text = path.read_text()
-            
-            # Remove older "already root" early-abort block.
-            patterns = [
-                r'\n[ \t]*if[ \t]*\([ \t]*cred->euid\.val[ \t]*==[ \t]*0[ \t]*\)[ \t]*\{\n[ \t]*pr_warn\("Already root, don\'t escape!\\n"\);\n[ \t]*goto out_abort_creds;\n[ \t]*\}\n',
-                r'\n[ \t]*if[ \t]*\([ \t]*uid_eq\([ \t]*cred->euid[ \t]*,[ \t]*GLOBAL_ROOT_UID[ \t]*\)[ \t]*\)[ \t]*\{\n[ \t]*pr_warn\("Already root, don\'t escape!\\n"\);\n[ \t]*goto out_abort_creds;\n[ \t]*\}\n',
-            ]
-            
-            for pattern in patterns:
-                text = re.sub(pattern, '\n', text, flags=re.S)
-            
-            # Guard disable_seccomp(); only when it is not already guarded by TIF_SECCOMP.
-            lines = text.splitlines()
-            new_lines = []
-            
-            for line in lines:
-                if re.match(r'^[ \t]*disable_seccomp[ \t]*\(\);[ \t]*$', line):
-                    prev1 = new_lines[-1] if len(new_lines) >= 1 else ""
-                    prev2 = new_lines[-2] if len(new_lines) >= 2 else ""
-            
-                    if "TIF_SECCOMP" in prev1 or "TIF_SECCOMP" in prev2:
-                        new_lines.append(line)
-                    else:
-                        indent = re.match(r'^([ \t]*)', line).group(1)
-                        new_lines.append(indent + "if (likely(test_thread_flag(TIF_SECCOMP)))")
-                        new_lines.append(indent + "    disable_seccomp();")
-                else:
-                    new_lines.append(line)
-            
-            text = "\n".join(new_lines) + ("\n" if text.endswith("\n") else "")
-            
-            # Remove incompatible tracepoint flag loop.
-            text = re.sub(
-                r'\n[ \t]*for_each_thread[ \t]*\([ \t]*p[ \t]*,[ \t]*t[ \t]*\)[ \t]*\{\n[ \t]*ksu_set_task_tracepoint_flag[ \t]*\([ \t]*t[ \t]*\);[ \t]*\n[ \t]*\}\n',
-                '\n',
-                text,
-                flags=re.S,
-            )
-            
-            path.write_text(text)
-            PY  
+          local python_script
+          python_script="${RUNNER_TEMP:-/tmp}/fix_sukisu_app_profile.py"
+
+          {
+            printf '%s\n' 'from pathlib import Path'
+            printf '%s\n' 'import re'
+            printf '%s\n' 'import sys'
+            printf '%s\n' ''
+            printf '%s\n' 'path = Path(sys.argv[1])'
+            printf '%s\n' 'text = path.read_text()'
+            printf '%s\n' ''
+            printf '%s\n' 'patterns = ['
+            printf '%s\n' '    r'\''\n[ \t]*if[ \t]*\([ \t]*cred->euid\.val[ \t]*==[ \t]*0[ \t]*\)[ \t]*\{\n[ \t]*pr_warn\("Already root, don\'\''t escape!\\n"\);\n[ \t]*goto out_abort_creds;\n[ \t]*\}\n'\'','
+            printf '%s\n' '    r'\''\n[ \t]*if[ \t]*\([ \t]*uid_eq\([ \t]*cred->euid[ \t]*,[ \t]*GLOBAL_ROOT_UID[ \t]*\)[ \t]*\)[ \t]*\{\n[ \t]*pr_warn\("Already root, don\'\''t escape!\\n"\);\n[ \t]*goto out_abort_creds;\n[ \t]*\}\n'\'','
+            printf '%s\n' ']'
+            printf '%s\n' ''
+            printf '%s\n' 'for pattern in patterns:'
+            printf '%s\n' '    text = re.sub(pattern, "\n", text, flags=re.S)'
+            printf '%s\n' ''
+            printf '%s\n' 'lines = text.splitlines()'
+            printf '%s\n' 'new_lines = []'
+            printf '%s\n' ''
+            printf '%s\n' 'for line in lines:'
+            printf '%s\n' '    if re.match(r"^[ \t]*disable_seccomp[ \t]*\(\);[ \t]*$", line):'
+            printf '%s\n' '        prev1 = new_lines[-1] if len(new_lines) >= 1 else ""'
+            printf '%s\n' '        prev2 = new_lines[-2] if len(new_lines) >= 2 else ""'
+            printf '%s\n' ''
+            printf '%s\n' '        if "TIF_SECCOMP" in prev1 or "TIF_SECCOMP" in prev2:'
+            printf '%s\n' '            new_lines.append(line)'
+            printf '%s\n' '        else:'
+            printf '%s\n' '            indent = re.match(r"^([ \t]*)", line).group(1)'
+            printf '%s\n' '            new_lines.append(indent + "if (likely(test_thread_flag(TIF_SECCOMP)))")'
+            printf '%s\n' '            new_lines.append(indent + "    disable_seccomp();")'
+            printf '%s\n' '    else:'
+            printf '%s\n' '        new_lines.append(line)'
+            printf '%s\n' ''
+            printf '%s\n' 'text = "\n".join(new_lines) + ("\n" if text.endswith("\n") else "")'
+            printf '%s\n' ''
+            printf '%s\n' 'text = re.sub('
+            printf '%s\n' '    r'\''\n[ \t]*for_each_thread[ \t]*\([ \t]*p[ \t]*,[ \t]*t[ \t]*\)[ \t]*\{\n[ \t]*ksu_set_task_tracepoint_flag[ \t]*\([ \t]*t[ \t]*\);[ \t]*\n[ \t]*\}\n'\'','
+            printf '%s\n' '    "\n",'
+            printf '%s\n' '    text,'
+            printf '%s\n' '    flags=re.S,'
+            printf '%s\n' ')'
+            printf '%s\n' ''
+            printf '%s\n' 'path.write_text(text)'
+          } > "$python_script"
+
+          python3 "$python_script" "$target"
 
           if grep -n "Already root, don't escape" "$target"; then
             echo "::error::Already-root early abort still remains in $target"
