@@ -2893,8 +2893,8 @@ runs:
           echo "Build Timestamp: $FINAL_TIMESTAMP"
           echo "Build User: ${{ env.BUILD_USER }}"
           echo "Build Host: ${{ env.BUILD_HOST }}"
-          echo "ReSukiSU Version: ${KSUVER:-unknown}"
-          echo "ReSukiSU commit SHA: ${KSU_SHA:-unknown}"
+          echo "SukiSU Ultra Version: ${KSUVER:-unknown}"
+          echo "SukiSU Ultra commit SHA: ${KSU_SHA:-unknown}"
 
           if [ "${OP_SUSFS:-false}" = "true" ]; then
             echo "SUSFS Version: ${SUSVER:-unknown}"
@@ -2943,12 +2943,12 @@ runs:
           echo "| **Build Timestamp** | \`${FINAL_TIMESTAMP}\` |"
           echo "| **Build User** | ${{ env.BUILD_USER }} |"
           echo "| **Build Host** | ${{ env.BUILD_HOST }} |"
-          echo "| **ReSukiSU Version** | ${KSUVER:-unknown} |"
+          echo "| **SukiSU Ultra Version** | ${KSUVER:-unknown} |"
 
           if [ "$KSU_SHA" != "unknown" ]; then
-            echo "| **ReSukiSU Commit** | [\`${KSU_SHA:0:8}\`](https://github.com/ReSukiSU/ReSukiSU/commit/$KSU_SHA) |"
+            echo "| **SukiSU Ultra Commit** | [\`${KSU_SHA:0:8}\`](https://github.com/ReSukiSU/ReSukiSU/commit/$KSU_SHA) |"
           else
-            echo "| **ReSukiSU Commit** | unknown |"
+            echo "| **SukiSU Ultra Commit** | unknown |"
           fi
 
           if [ "${OP_SUSFS:-false}" = "true" ]; then
