@@ -489,6 +489,9 @@ fi
   # Wrap the raw native argv pointer into struct user_arg_ptr.
   # ---------------------------------------------------------------------------
 
+  # Hard fallback before sucompat argv_user fixer.
+  perl -0pi -e 's/ksu_sulog_capture_sucompat\s*\(\s*\*filename_user\s*,\s*argv_user\s*,\s*GFP_KERNEL\s*\)/ksu_sulog_capture_sucompat(path, NULL, GFP_KERNEL)/g' "$c"
+
   if grep -q 'ksu_sulog_capture_sucompat(\*filename_user, argv_user, GFP_KERNEL)' "$c"; then
 echo "  Fixing ksu_sulog_capture_sucompat argv_user type in: $c"
 
@@ -539,6 +542,11 @@ exit 1
 echo "::error::Old bool declaration remains in $h"
 exit 1
   fi
+
+  # Hard fallback for older SukiSU execve sucompat handler shape.
+  # This handles:
+  #   ksu_sulog_capture_sucompat(*filename_user, argv_user, GFP_KERNEL)
+  perl -0pi -e 's/ksu_sulog_capture_sucompat\s*\(\s*\*filename_user\s*,\s*argv_user\s*,\s*GFP_KERNEL\s*\)/ksu_sulog_capture_sucompat(path, NULL, GFP_KERNEL)/g' "$c"
 
   if grep -q 'ksu_sulog_capture_sucompat(\*filename_user, argv_user, GFP_KERNEL)' "$c"; then
 echo "::error::Old incompatible ksu_sulog_capture_sucompat argv_user call remains in $c"
@@ -1368,6 +1376,11 @@ if ! grep -qE 'DEFINE_STATIC_KEY_(TRUE|FALSE)\(ksu_su_compat_enabled\)' "$sucomp
   echo "::error::ksu_su_compat_enabled static_key definition missing in $sucompat_c"
   exit 1
 fi
+
+# Hard fallback for older SukiSU execve sucompat handler shape.
+# This handles:
+#   ksu_sulog_capture_sucompat(*filename_user, argv_user, GFP_KERNEL)
+perl -0pi -e 's/ksu_sulog_capture_sucompat\s*\(\s*\*filename_user\s*,\s*argv_user\s*,\s*GFP_KERNEL\s*\)/ksu_sulog_capture_sucompat(path, NULL, GFP_KERNEL)/g' "$sucompat_c"
 
 if grep -q 'ksu_sulog_capture_sucompat(\*filename_user, argv_user, GFP_KERNEL)' "$sucompat_c"; then
   echo "::error::Old incompatible ksu_sulog_capture_sucompat argv_user call remains in $sucompat_c"
