@@ -499,42 +499,46 @@ import sys
 p = Path(sys.argv[1])
 s = p.read_text()
 
+old_call = "pending_sucompat = ksu_sulog_capture_sucompat(*filename_user, argv_user, GFP_KERNEL);"
+
+if old_call not in s:
+    p.write_text(s)
+    sys.exit(0)
+
+# struct user_arg_ptr is declared through exec/binfmt-related headers.
+# Keep this explicit so the generated compatibility code is self-contained.
 if "#include <linux/binfmts.h>" not in s:
     s = "#include <linux/binfmts.h>\n" + s
 
+# Add argv_arg_ptr after the local argv_user declaration.
+# This intentionally matches broadly because SukiSU/KSU trees differ slightly
+# in spacing, casts, and pt_regs accessor style.
 if "struct user_arg_ptr argv_arg_ptr;" not in s:
-    declaration_patterns = [
-        (
-            r'(const\s+char\s+__user\s+\*const\s+__user\s+\*argv_user\s*=\s*'
-            r'\(const\s+char\s+__user\s+\*const\s+__user\s+\*\)\s*PT_REGS_PARM2\(regs\);\n)',
-            r'\1    struct user_arg_ptr argv_arg_ptr;\n',
-        ),
-        (
-            r'(const\s+char\s+__user\s+\*const\s+__user\s+\*argv_user\s*=\s*'
-            r'\(const\s+char\s+__user\s+\*const\s+__user\s+\*\)\s*regs->__PT_PARM2_REG;\n)',
-            r'\1    struct user_arg_ptr argv_arg_ptr;\n',
-        ),
-        (
-            r'(const\s+char\s+__user\s+\*const\s+__user\s+\*argv_user\s*=\s*'
-            r'\(const\s+char\s+__user\s+\*const\s+__user\s+\*\)\s*regs->__PT_PARM2_REG\s*;\n)',
-            r'\1    struct user_arg_ptr argv_arg_ptr;\n',
-        ),
-    ]
+    pattern = re.compile(
+        r'(?P<line>^[ \t]*const[ \t]+char[ \t]+__user[ \t]+\*const[ \t]+__user[ \t]+\*argv_user[ \t]*=[^\n;]+;\n)',
+        re.M,
+    )
 
-    inserted = False
-    for pattern, replacement in declaration_patterns:
-        s2, count = re.subn(pattern, replacement, s, count=1)
-        if count:
-            s = s2
-            inserted = True
-            break
+    match = pattern.search(s)
 
-    if not inserted:
-        print("::warning::Could not find argv_user declaration anchor; call replacement may fail validation")
+    if not match:
+        print("::error::Could not find argv_user declaration anchor in sucompat.c")
+        print("::error::Relevant lines:")
+        for i, line in enumerate(s.splitlines(), 1):
+            if "argv_user" in line or "ksu_sulog_capture_sucompat" in line:
+                print(f"{i}: {line}")
+        sys.exit(1)
 
-old_call = "pending_sucompat = ksu_sulog_capture_sucompat(*filename_user, argv_user, GFP_KERNEL);"
+    line = match.group("line")
+    indent = re.match(r'^[ \t]*', line).group(0)
+
+    replacement = line + indent + "struct user_arg_ptr argv_arg_ptr;\n"
+    s = s[:match.start()] + replacement + s[match.end():]
+
 new_call = """argv_arg_ptr.ptr.native = argv_user;
+#ifdef CONFIG_COMPAT
     argv_arg_ptr.is_compat = false;
+#endif
     pending_sucompat = ksu_sulog_capture_sucompat(*filename_user, &argv_arg_ptr, GFP_KERNEL);"""
 
 s = s.replace(old_call, new_call)
@@ -569,6 +573,13 @@ PY
     if ! grep -q '#include <linux/binfmts.h>' "$c"; then
       echo "::error::struct user_arg_ptr compatibility include is missing in $c"
       grep -nE 'linux/binfmts.h|argv_arg_ptr|ksu_sulog_capture_sucompat' "$c" || true
+      exit 1
+    fi
+
+    if grep -q 'argv_arg_ptr.is_compat = false;' "$c" && \
+       ! grep -q '#ifdef CONFIG_COMPAT' "$c"; then
+      echo "::error::argv_arg_ptr.is_compat is unguarded by CONFIG_COMPAT in $c"
+      grep -nE 'CONFIG_COMPAT|argv_arg_ptr|ksu_sulog_capture_sucompat' "$c" || true
       exit 1
     fi
   fi
@@ -1241,6 +1252,13 @@ for sucompat_c in \
       if ! grep -q '#include <linux/binfmts.h>' "$sucompat_c"; then
         echo "::error::struct user_arg_ptr compatibility include is missing in $sucompat_c"
         grep -nE 'linux/binfmts.h|argv_arg_ptr|ksu_sulog_capture_sucompat' "$sucompat_c" || true
+        exit 1
+      fi
+
+      if grep -q 'argv_arg_ptr.is_compat = false;' "$sucompat_c" && \
+         ! grep -q '#ifdef CONFIG_COMPAT' "$sucompat_c"; then
+        echo "::error::argv_arg_ptr.is_compat is unguarded by CONFIG_COMPAT in $sucompat_c"
+        grep -nE 'CONFIG_COMPAT|argv_arg_ptr|ksu_sulog_capture_sucompat' "$sucompat_c" || true
         exit 1
       fi
     fi
