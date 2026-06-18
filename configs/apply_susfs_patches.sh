@@ -471,6 +471,78 @@ HEOF
 
   sed -i 's/long ksu_handle_execve_sucompat(const char __user \*\*filename_user, int orig_nr, struct pt_regs \*regs);/long ksu_handle_execve_sucompat(const char __user **filename_user, int orig_nr, const struct pt_regs *regs);/' "$h" || true
 
+  # ---------------------------------------------------------------------------
+  # Fix SukiSU v4.1.x sulog API mismatch.
+  #
+  # Newer SukiSU declares:
+  #   ksu_sulog_capture_sucompat(..., struct user_arg_ptr *argv_user, ...)
+  #
+  # Some SUSFS/SukiSU compatibility patches leave older code like:
+  #   const char __user *const __user *argv_user = ...
+  #   ksu_sulog_capture_sucompat(*filename_user, argv_user, GFP_KERNEL);
+  #
+  # That fails with:
+  #   incompatible pointer types passing 'const char __user *const __user *'
+  #   to parameter of type 'struct user_arg_ptr *'
+  #
+  # Wrap the raw native argv pointer into struct user_arg_ptr.
+  # ---------------------------------------------------------------------------
+
+  if grep -q 'ksu_sulog_capture_sucompat(\*filename_user, argv_user, GFP_KERNEL)' "$c"; then
+    echo "  Fixing ksu_sulog_capture_sucompat argv_user type in: $c"
+
+    python3 - "$c" <<'PY'
+from pathlib import Path
+import re
+import sys
+
+p = Path(sys.argv[1])
+s = p.read_text()
+
+if "#include <linux/binfmts.h>" not in s:
+    s = "#include <linux/binfmts.h>\n" + s
+
+if "struct user_arg_ptr argv_arg_ptr;" not in s:
+    declaration_patterns = [
+        (
+            r'(const\s+char\s+__user\s+\*const\s+__user\s+\*argv_user\s*=\s*'
+            r'\(const\s+char\s+__user\s+\*const\s+__user\s+\*\)\s*PT_REGS_PARM2\(regs\);\n)',
+            r'\1    struct user_arg_ptr argv_arg_ptr;\n',
+        ),
+        (
+            r'(const\s+char\s+__user\s+\*const\s+__user\s+\*argv_user\s*=\s*'
+            r'\(const\s+char\s+__user\s+\*const\s+__user\s+\*\)\s*regs->__PT_PARM2_REG;\n)',
+            r'\1    struct user_arg_ptr argv_arg_ptr;\n',
+        ),
+        (
+            r'(const\s+char\s+__user\s+\*const\s+__user\s+\*argv_user\s*=\s*'
+            r'\(const\s+char\s+__user\s+\*const\s+__user\s+\*\)\s*regs->__PT_PARM2_REG\s*;\n)',
+            r'\1    struct user_arg_ptr argv_arg_ptr;\n',
+        ),
+    ]
+
+    inserted = False
+    for pattern, replacement in declaration_patterns:
+        s2, count = re.subn(pattern, replacement, s, count=1)
+        if count:
+            s = s2
+            inserted = True
+            break
+
+    if not inserted:
+        print("::warning::Could not find argv_user declaration anchor; call replacement may fail validation")
+
+old_call = "pending_sucompat = ksu_sulog_capture_sucompat(*filename_user, argv_user, GFP_KERNEL);"
+new_call = """argv_arg_ptr.ptr.native = argv_user;
+    argv_arg_ptr.is_compat = false;
+    pending_sucompat = ksu_sulog_capture_sucompat(*filename_user, &argv_arg_ptr, GFP_KERNEL);"""
+
+s = s.replace(old_call, new_call)
+
+p.write_text(s)
+PY
+  fi
+
   if ! grep -qE 'DEFINE_STATIC_KEY_(TRUE|FALSE)\(ksu_su_compat_enabled\)' "$c"; then
     echo "::error::ksu_su_compat_enabled static_key definition missing in $c"
     exit 1
@@ -479,6 +551,26 @@ HEOF
   if grep -q 'extern bool ksu_su_compat_enabled' "$h"; then
     echo "::error::Old bool declaration remains in $h"
     exit 1
+  fi
+
+  if grep -q 'ksu_sulog_capture_sucompat(\*filename_user, argv_user, GFP_KERNEL)' "$c"; then
+    echo "::error::Old incompatible ksu_sulog_capture_sucompat argv_user call remains in $c"
+    grep -n 'ksu_sulog_capture_sucompat' "$c" || true
+    exit 1
+  fi
+
+  if grep -q 'ksu_sulog_capture_sucompat(\*filename_user, &argv_arg_ptr, GFP_KERNEL)' "$c"; then
+    if ! grep -q 'struct user_arg_ptr argv_arg_ptr;' "$c"; then
+      echo "::error::argv_arg_ptr is used but not declared in $c"
+      grep -nE 'argv_arg_ptr|ksu_sulog_capture_sucompat' "$c" || true
+      exit 1
+    fi
+
+    if ! grep -q '#include <linux/binfmts.h>' "$c"; then
+      echo "::error::struct user_arg_ptr compatibility include is missing in $c"
+      grep -nE 'linux/binfmts.h|argv_arg_ptr|ksu_sulog_capture_sucompat' "$c" || true
+      exit 1
+    fi
   fi
 
   if ! grep -qE 'ksu_handle_faccessat_sucompat|ksu_handle_faccessat[[:space:]]*\(' "$c"; then
