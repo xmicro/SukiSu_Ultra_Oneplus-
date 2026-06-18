@@ -585,6 +585,10 @@ echo "::error::No stat sucompat handler found in $c"
 exit 1
   fi
 
+  # Cleanup: silence harmless unused argv_user warning in sucompat.c.
+  # Some SukiSU/SUSFS compatibility paths keep argv_user for ABI/logging compatibility.
+  perl -0pi -e 's/(const\s+char\s+__user\s+\*const\s+__user\s+\*argv_user\s*=\s*\(const\s+char\s+__user\s+\*const\s+__user\s+\*\)PT_REGS_PARM2\(regs\);\n)(?!\s*\(void\)argv_user;)/$1    (void)argv_user;\n/g' "$sucompat_c" 2>/dev/null || true
+
   echo "✅ sucompat API fixed in: $base"
 }
 
