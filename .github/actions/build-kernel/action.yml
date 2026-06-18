@@ -973,17 +973,28 @@ runs:
     
         if [ ! -f "$SCRIPT" ]; then
           echo "::error::SUSFS script not found: $SCRIPT"
-          find "$GITHUB_WORKSPACE" -maxdepth 4 -type f -name 'apply_susfs_patches.sh' -print
+          find "$GITHUB_WORKSPACE" -maxdepth 5 -type f -name 'apply_susfs_patches.sh' -print
           exit 1
         fi
     
-        echo "Checking script format:"
-        file "$SCRIPT" || true
-    
-        echo "Normalizing script line endings..."
         sed -i 's/\r$//' "$SCRIPT"
-    
         chmod +x "$SCRIPT"
+    
+        echo "Looking for 10_enable_susfs_for_ksu.patch..."
+        FOUND_PATCH="$(find "$GITHUB_WORKSPACE" -type f -name '10_enable_susfs_for_ksu.patch' | head -n1 || true)"
+    
+        if [ -z "$FOUND_PATCH" ]; then
+          echo "::warning::10_enable_susfs_for_ksu.patch was not found anywhere under $GITHUB_WORKSPACE"
+          echo "Available patch files:"
+          find "$GITHUB_WORKSPACE/kernel_patches" -type f -name '*.patch' | sort || true
+    
+          echo ""
+          echo "References inside apply_susfs_patches.sh:"
+          grep -nE '10_enable_susfs|susfs|patch -p' "$SCRIPT" || true
+        else
+          echo "Found patch: $FOUND_PATCH"
+        fi
+    
         bash "$SCRIPT"
     
     - name: Add BBG
