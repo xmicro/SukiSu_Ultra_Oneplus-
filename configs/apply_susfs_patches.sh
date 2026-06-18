@@ -480,7 +480,7 @@ fi
   #
   # Some SUSFS/SukiSU compatibility patches leave older code like:
   #   const char __user *const __user *argv_user = ...
-  #   ksu_sulog_capture_sucompat(*filename_user, argv_user, GFP_KERNEL);
+  #   ksu_sulog_capture_sucompat(path, NULL, GFP_KERNEL);
   #
   # That fails with:
   #   incompatible pointer types passing 'const char __user *const __user *'
