@@ -1133,7 +1133,27 @@ for sucompat_c in \
       exit 1
     fi
 
-    echo "✅ sucompat.c static_key validated: $sucompat_c"
+    if grep -q 'ksu_sulog_capture_sucompat(\*filename_user, argv_user, GFP_KERNEL)' "$sucompat_c"; then
+      echo "::error::Old incompatible ksu_sulog_capture_sucompat argv_user call remains in $sucompat_c"
+      grep -n 'ksu_sulog_capture_sucompat' "$sucompat_c" || true
+      exit 1
+    fi
+
+    if grep -q 'ksu_sulog_capture_sucompat(\*filename_user, &argv_arg_ptr, GFP_KERNEL)' "$sucompat_c"; then
+      if ! grep -q 'struct user_arg_ptr argv_arg_ptr;' "$sucompat_c"; then
+        echo "::error::argv_arg_ptr is used but not declared in $sucompat_c"
+        grep -nE 'argv_arg_ptr|ksu_sulog_capture_sucompat' "$sucompat_c" || true
+        exit 1
+      fi
+
+      if ! grep -q '#include <linux/binfmts.h>' "$sucompat_c"; then
+        echo "::error::struct user_arg_ptr compatibility include is missing in $sucompat_c"
+        grep -nE 'linux/binfmts.h|argv_arg_ptr|ksu_sulog_capture_sucompat' "$sucompat_c" || true
+        exit 1
+      fi
+    fi
+
+    echo "✅ sucompat.c API/static_key validated: $sucompat_c"
   fi
 done
 
