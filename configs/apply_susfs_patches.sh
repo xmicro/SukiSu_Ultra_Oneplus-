@@ -285,40 +285,41 @@ path = Path(sys.argv[1])
 text = path.read_text()
 
 patterns = [
-r'\n[ \t]*if[ \t]*\([ \t]*cred->euid\.val[ \t]*==[ \t]*0[ \t]*\)[ \t]*\{\n[ \t]*pr_warn\("Already root, don\'t escape!\\n"\);\n[ \t]*goto out_abort_creds;\n[ \t]*\}\n',
-r'\n[ \t]*if[ \t]*\([ \t]*uid_eq\([ \t]*cred->euid[ \t]*,[ \t]*GLOBAL_ROOT_UID[ \t]*\)[ \t]*\)[ \t]*\{\n[ \t]*pr_warn\("Already root, don\'t escape!\\n"\);\n[ \t]*goto out_abort_creds;\n[ \t]*\}\n',
+    r'\n[ \t]*if[ \t]*\([ \t]*cred->euid\.val[ \t]*==[ \t]*0[ \t]*\)[ \t]*\{\n[ \t]*pr_warn\("Already root, don\'t escape!\\n"\);\n[ \t]*goto out_abort_creds;\n[ \t]*\}\n',
+    r'\n[ \t]*if[ \t]*\([ \t]*uid_eq\([ \t]*cred->euid[ \t]*,[ \t]*GLOBAL_ROOT_UID[ \t]*\)[ \t]*\)[ \t]*\{\n[ \t]*pr_warn\("Already root, don\'t escape!\\n"\);\n[ \t]*goto out_abort_creds;\n[ \t]*\}\n',
 ]
 
 for pattern in patterns:
-text = re.sub(pattern, "\n", text, flags=re.S)
+    text = re.sub(pattern, "\n", text, flags=re.S)
 
 lines = text.splitlines()
 new_lines = []
 
 for line in lines:
-if re.match(r"^[ \t]*disable_seccomp[ \t]*\(\);[ \t]*$", line):
-    prev1 = new_lines[-1] if len(new_lines) >= 1 else ""
-    prev2 = new_lines[-2] if len(new_lines) >= 2 else ""
+    if re.match(r"^[ \t]*disable_seccomp[ \t]*\(\);[ \t]*$", line):
+        prev1 = new_lines[-1] if len(new_lines) >= 1 else ""
+        prev2 = new_lines[-2] if len(new_lines) >= 2 else ""
 
-    if "TIF_SECCOMP" in prev1 or "TIF_SECCOMP" in prev2:
-        new_lines.append(line)
+        if "TIF_SECCOMP" in prev1 or "TIF_SECCOMP" in prev2:
+            new_lines.append(line)
+        else:
+            indent = re.match(r"^([ \t]*)", line).group(1)
+            new_lines.append(indent + "if (likely(test_thread_flag(TIF_SECCOMP)))")
+            new_lines.append(indent + "    disable_seccomp();")
     else:
-        indent = re.match(r"^([ \t]*)", line).group(1)
-        new_lines.append(indent + "if (likely(test_thread_flag(TIF_SECCOMP)))")
-        new_lines.append(indent + "    disable_seccomp();")
-else:
-    new_lines.append(line)
+        new_lines.append(line)
 
 text = "\n".join(new_lines) + ("\n" if text.endswith("\n") else "")
 
 text = re.sub(
-r'\n[ \t]*for_each_thread[ \t]*\([ \t]*p[ \t]*,[ \t]*t[ \t]*\)[ \t]*\{\n[ \t]*ksu_set_task_tracepoint_flag[ \t]*\([ \t]*t[ \t]*\);[ \t]*\n[ \t]*\}\n',
-"\n",
-text,
-flags=re.S,
+    r'\n[ \t]*for_each_thread[ \t]*\([ \t]*p[ \t]*,[ \t]*t[ \t]*\)[ \t]*\{\n[ \t]*ksu_set_task_tracepoint_flag[ \t]*\([ \t]*t[ \t]*\);[ \t]*\n[ \t]*\}\n',
+    "\n",
+    text,
+    flags=re.S,
 )
 
 path.write_text(text)
+
 PY
 
   if grep -n "Already root, don't escape" "$target"; then
@@ -496,54 +497,36 @@ from pathlib import Path
 import re
 import sys
 
-p = Path(sys.argv[1])
-s = p.read_text()
-
-old_call = "pending_sucompat = ksu_sulog_capture_sucompat(*filename_user, argv_user, GFP_KERNEL);"
-
-if old_call not in s:
-p.write_text(s)
-sys.exit(0)
-
-# struct user_arg_ptr is declared through exec/binfmt-related headers.
-# Keep this explicit so the generated compatibility code is self-contained.
-if "#include <linux/binfmts.h>" not in s:
-s = "#include <linux/binfmts.h>\n" + s
-
-# Add argv_arg_ptr after the local argv_user declaration.
-# This intentionally matches broadly because SukiSU/KSU trees differ slightly
-# in spacing, casts, and pt_regs accessor style.
-if "struct user_arg_ptr argv_arg_ptr;" not in s:
-pattern = re.compile(
-    r'(?P<line>^[ \t]*const[ \t]+char[ \t]+__user[ \t]+\*const[ \t]+__user[ \t]+\*argv_user[ \t]*=[^\n;]+;\n)',
-    re.M,
-)
-
-match = pattern.search(s)
-
-if not match:
-    print("::error::Could not find argv_user declaration anchor in sucompat.c")
-    print("::error::Relevant lines:")
-    for i, line in enumerate(s.splitlines(), 1):
-        if "argv_user" in line or "ksu_sulog_capture_sucompat" in line:
-            print(f"{i}: {line}")
+if len(sys.argv) < 2:
+    print("::error::Missing target file argument")
     sys.exit(1)
 
-line = match.group("line")
-indent = re.match(r'^[ \t]*', line).group(0)
+p = Path(sys.argv[1])
 
-replacement = line + indent + "struct user_arg_ptr argv_arg_ptr;\n"
-s = s[:match.start()] + replacement + s[match.end():]
+if not p.exists():
+    print(f"::error::Target file does not exist: {p}")
+    sys.exit(1)
 
-new_call = """argv_arg_ptr.ptr.native = argv_user;
-#ifdef CONFIG_COMPAT
-argv_arg_ptr.is_compat = false;
-#endif
-pending_sucompat = ksu_sulog_capture_sucompat(*filename_user, &argv_arg_ptr, GFP_KERNEL);"""
+s = p.read_text()
 
-s = s.replace(old_call, new_call)
+if "#include <linux/errno.h>" not in s:
+    s = "#include <linux/errno.h>\n" + s
+
+if "#include <linux/fs.h>" not in s:
+    s = "#include <linux/fs.h>\n" + s
+
+if "#include <linux/binfmts.h>" not in s:
+    s = "#include <linux/binfmts.h>\n" + s
+
+s = re.sub(
+    r"return\s+ksu_syscall_table\s*\[[^\]]+\]\s*\([^;]*\)\s*;",
+    "return -ENOSYS;",
+    s,
+    flags=re.S,
+)
 
 p.write_text(s)
+
 PY
   fi
 
@@ -1116,46 +1099,46 @@ import sys
 path = Path("fs/proc/task_mmu.c")
 
 if not path.exists():
-print("::error::fs/proc/task_mmu.c does not exist")
-sys.exit(1)
+    print("::error::fs/proc/task_mmu.c does not exist")
+    sys.exit(1)
 
 text = path.read_text()
 
 function_match = re.search(
-r"static\s+int\s+show_smaps_rollup\s*\([^)]*\)\s*\{",
-text,
+    r"static\s+int\s+show_smaps_rollup\s*\([^)]*\)\s*\{",
+    text,
 )
 
 if not function_match:
-print("::error::Could not find show_smaps_rollup() in fs/proc/task_mmu.c")
-sys.exit(1)
+    print("::error::Could not find show_smaps_rollup() in fs/proc/task_mmu.c")
+    sys.exit(1)
 
 start = function_match.start()
 tail = text[start:]
 
 target_pattern = re.compile(
-r"(?P<indent>[ \t]+)smap_gather_stats\(vma,\s*&mss,\s*last_vma_end\);\n"
-r"(?P=indent)last_vma_end\s*=\s*vma->vm_end;",
+    r"(?P<indent>[ \t]+)smap_gather_stats\(vma,\s*&mss,\s*last_vma_end\);\n"
+    r"(?P=indent)last_vma_end\s*=\s*vma->vm_end;",
 )
 
 match = target_pattern.search(tail)
 
 if not match:
-print("::error::Could not find target smap_gather_stats block inside show_smaps_rollup()")
-sys.exit(1)
+    print("::error::Could not find target smap_gather_stats block inside show_smaps_rollup()")
+    sys.exit(1)
 
 indent = match.group("indent")
 
 replacement = (
-"#ifdef CONFIG_KSU_SUSFS_SUS_MAP\n"
-+ indent + "if (!vma->vm_file || !(SUSFS_IS_INODE_SUS_MAP(file_inode(vma->vm_file)))) {\n"
-+ indent + "\tsmap_gather_stats(vma, &mss, last_vma_end);\n"
-+ indent + "\tlast_vma_end = vma->vm_end;\n"
-+ indent + "}\n"
-+ "#else\n"
-+ indent + "smap_gather_stats(vma, &mss, last_vma_end);\n"
-+ indent + "last_vma_end = vma->vm_end;\n"
-+ "#endif // #ifdef CONFIG_KSU_SUSFS_SUS_MAP"
+    "#ifdef CONFIG_KSU_SUSFS_SUS_MAP\n"
+    + indent + "if (!vma->vm_file || !(SUSFS_IS_INODE_SUS_MAP(file_inode(vma->vm_file)))) {\n"
+    + indent + "\tsmap_gather_stats(vma, &mss, last_vma_end);\n"
+    + indent + "\tlast_vma_end = vma->vm_end;\n"
+    + indent + "}\n"
+    + "#else\n"
+    + indent + "smap_gather_stats(vma, &mss, last_vma_end);\n"
+    + indent + "last_vma_end = vma->vm_end;\n"
+    + "#endif // #ifdef CONFIG_KSU_SUSFS_SUS_MAP"
 )
 
 absolute_start = start + match.start()
@@ -1166,6 +1149,7 @@ new_text = text[:absolute_start] + replacement + text[absolute_end:]
 path.write_text(new_text)
 
 print("Applied SUSFS show_smaps_rollup fallback patch")
+
 PY
 
   if ! grep -q 'SUSFS_IS_INODE_SUS_MAP(file_inode(vma->vm_file))' fs/proc/task_mmu.c; then
@@ -1230,7 +1214,6 @@ fi
 
 fix_sukisu_dispatch_c           "drivers/kernelsu/supercall/dispatch.c"
 fix_sukisu_sucompat_api         "drivers/kernelsu"
-fix_sukisu_forced_execveat_link_symbols "drivers/kernelsu"
 fix_sukisu_syscall_event_bridge "drivers/kernelsu/hook/syscall_event_bridge.c"
 fix_sukisu_linker_symbols
 
