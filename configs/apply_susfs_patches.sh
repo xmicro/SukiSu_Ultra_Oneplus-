@@ -598,6 +598,50 @@ fix_sukisu_forced_execveat_link_symbols() {
   local ksud_integration_c="$base/runtime/ksud_integration.c"
 
   echo "Force-fixing SukiSU execveat/link symbols in: $base"
+  # Hard fallback: fix wrong ksu_handle_execveat_init stub signature in ksud_integration.c.
+  # Some compatibility paths accidentally create:
+  #   void ksu_handle_execveat_init(void)
+  # but the SukiSU execveat flow expects:
+  #   int ksu_handle_execveat_init(struct filename *, struct user_arg_ptr *, struct user_arg_ptr *)
+  python3 - "$ksud_integration_c" <<'PY'
+from pathlib import Path
+import re
+import sys
+
+p = Path(sys.argv[1])
+s = p.read_text()
+
+good_sig = "int ksu_handle_execveat_init(struct filename *filename, struct user_arg_ptr *argv_user, struct user_arg_ptr *envp_user)"
+
+good_body = """int ksu_handle_execveat_init(struct filename *filename, struct user_arg_ptr *argv_user, struct user_arg_ptr *envp_user)
+{
+    /*
+     * Compatibility stub for SukiSU/SUSFS execveat integration.
+     * Real sucompat handling may live in kernel/feature/sucompat.c on some trees.
+     */
+    (void)filename;
+    (void)argv_user;
+    (void)envp_user;
+    return 0;
+}
+"""
+
+# Replace the known bad stub:
+#   void ksu_handle_execveat_init(void) { ... }
+s = re.sub(
+    r'void\s+ksu_handle_execveat_init\s*\(\s*void\s*\)\s*\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}',
+    good_body,
+    s,
+    flags=re.S,
+)
+
+# If no compatible body exists, append one.
+if good_sig not in s:
+    s = s.rstrip() + "\n\n" + good_body + "\n"
+
+p.write_text(s)
+PY
+
 
   if [ -f "$sucompat_c" ]; then
 grep -q '#include <linux/errno.h>' "$sucompat_c" || sed -i '1i#include <linux/errno.h>' "$sucompat_c"
@@ -691,7 +735,7 @@ fi
 
   if [ -f "$ksud_integration_c" ]; then
 if grep -q 'ksu_handle_execveat_init[[:space:]]*(' "$ksud_integration_c"; then
-  if ! grep -qE '^[[:space:]]*void[[:space:]]+ksu_handle_execveat_init[[:space:]]*\([^)]*\)[[:space:]]*\{' "$ksud_integration_c"; then
+  if ! grep -qE '^[[:space:]]*int[[:space:]]+ksu_handle_execveat_init[[:space:]]*\(' "$ksud_integration_c"; then
     cat >> "$ksud_integration_c" <<'CEOF'
 
 /*
@@ -700,8 +744,12 @@ if grep -q 'ksu_handle_execveat_init[[:space:]]*(' "$ksud_integration_c"; then
  * Some SUSFS patchsets expect ksu_handle_execveat_init(), while this SukiSU
  * Ultra tree may only declare or call it. Provide the missing body.
  */
-void ksu_handle_execveat_init(void)
+int ksu_handle_execveat_init(struct filename *filename, struct user_arg_ptr *argv_user, struct user_arg_ptr *envp_user)
 {
+    (void)filename;
+    (void)argv_user;
+    (void)envp_user;
+    return 0;
 }
 CEOF
   fi
@@ -732,8 +780,42 @@ if ! grep -qE '^[[:space:]]*int[[:space:]]+ksu_handle_execveat_sucompat[[:space:
 fi
   fi
 
+  # Hard fallback before execveat_init validation: normalize bad void stub to int stub.
+  if [ -f "$ksud_integration_c" ]; then
+    python3 - "$ksud_integration_c" <<'PY'
+from pathlib import Path
+import re
+import sys
+
+p = Path(sys.argv[1])
+s = p.read_text()
+
+good_sig = "int ksu_handle_execveat_init(struct filename *filename, struct user_arg_ptr *argv_user, struct user_arg_ptr *envp_user)"
+good_body = """int ksu_handle_execveat_init(struct filename *filename, struct user_arg_ptr *argv_user, struct user_arg_ptr *envp_user)
+{
+    (void)filename;
+    (void)argv_user;
+    (void)envp_user;
+    return 0;
+}
+"""
+
+s = re.sub(
+    r'void\s+ksu_handle_execveat_init\s*\(\s*void\s*\)\s*\{[^{}]*\}',
+    good_body,
+    s,
+    flags=re.S,
+)
+
+if "ksu_handle_execveat_init(" in s and good_sig not in s:
+    s = s.rstrip() + "\n\n" + good_body + "\n"
+
+p.write_text(s)
+PY
+  fi
+
   if [ -f "$ksud_integration_c" ] && grep -q 'ksu_handle_execveat_init[[:space:]]*(' "$ksud_integration_c"; then
-if ! grep -qE '^[[:space:]]*void[[:space:]]+ksu_handle_execveat_init[[:space:]]*\([^)]*\)[[:space:]]*\{' "$ksud_integration_c"; then
+if ! grep -qE '^[[:space:]]*int[[:space:]]+ksu_handle_execveat_init[[:space:]]*\(' "$ksud_integration_c"; then
   echo "::error::ksu_handle_execveat_init body missing in $ksud_integration_c"
   grep -n 'ksu_handle_execveat_init' "$ksud_integration_c" || true
   exit 1
@@ -1325,8 +1407,41 @@ echo "::error::ksu_no_custom_rc is referenced but not declared in drivers/kernel
 exit 1
   fi
 
+  if [ -f drivers/kernelsu/runtime/ksud_integration.c ]; then
+python3 - drivers/kernelsu/runtime/ksud_integration.c <<'PY'
+from pathlib import Path
+import re
+import sys
+
+p = Path(sys.argv[1])
+s = p.read_text()
+
+good_sig = "int ksu_handle_execveat_init(struct filename *filename, struct user_arg_ptr *argv_user, struct user_arg_ptr *envp_user)"
+good_body = """int ksu_handle_execveat_init(struct filename *filename, struct user_arg_ptr *argv_user, struct user_arg_ptr *envp_user)
+{
+    (void)filename;
+    (void)argv_user;
+    (void)envp_user;
+    return 0;
+}
+"""
+
+s = re.sub(
+    r'void\s+ksu_handle_execveat_init\s*\(\s*void\s*\)\s*\{[^{}]*\}',
+    good_body,
+    s,
+    flags=re.S,
+)
+
+if "ksu_handle_execveat_init(" in s and good_sig not in s:
+    s = s.rstrip() + "\n\n" + good_body + "\n"
+
+p.write_text(s)
+PY
+  fi
+
   if grep -q 'ksu_handle_execveat_init[[:space:]]*(' drivers/kernelsu/runtime/ksud_integration.c && \
- ! grep -qE '^[[:space:]]*void[[:space:]]+ksu_handle_execveat_init[[:space:]]*\([^)]*\)[[:space:]]*\{' drivers/kernelsu/runtime/ksud_integration.c; then
+ ! grep -qE '^[[:space:]]*int[[:space:]]+ksu_handle_execveat_init[[:space:]]*\(' drivers/kernelsu/runtime/ksud_integration.c; then
 echo "::error::ksu_handle_execveat_init is referenced but no function body exists"
 grep -n 'ksu_handle_execveat_init' drivers/kernelsu/runtime/ksud_integration.c || true
 exit 1
