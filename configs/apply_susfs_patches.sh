@@ -587,7 +587,11 @@ exit 1
 
   # Cleanup: silence harmless unused argv_user warning in sucompat.c.
   # Some SukiSU/SUSFS compatibility paths keep argv_user for ABI/logging compatibility.
-  perl -0pi -e 's/(const\s+char\s+__user\s+\*const\s+__user\s+\*argv_user\s*=\s*\(const\s+char\s+__user\s+\*const\s+__user\s+\*\)PT_REGS_PARM2\(regs\);\n)(?!\s*\(void\)argv_user;)/$1    (void)argv_user;\n/g' "$sucompat_c" 2>/dev/null || true
+  # Use a guarded path because this function may run with set -u before sucompat_c exists.
+  local _sucompat_cleanup_c="${sucompat_c:-$base/feature/sucompat.c}"
+  if [ -f "$_sucompat_cleanup_c" ]; then
+    perl -0pi -e 's/(const\s+char\s+__user\s+\*const\s+__user\s+\*argv_user\s*=\s*\(const\s+char\s+__user\s+\*const\s+__user\s+\*\)PT_REGS_PARM2\(regs\);\n)(?!\s*\(void\)argv_user;)/$1    (void)argv_user;\n/g' "$_sucompat_cleanup_c" 2>/dev/null || true
+  fi
 
   echo "✅ sucompat API fixed in: $base"
 }
