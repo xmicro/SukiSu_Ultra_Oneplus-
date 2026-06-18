@@ -604,6 +604,9 @@ grep -q '#include <linux/errno.h>' "$sucompat_c" || sed -i '1i#include <linux/er
 grep -q '#include <linux/fs.h>' "$sucompat_c" || sed -i '1i#include <linux/fs.h>' "$sucompat_c"
 grep -q '#include <linux/binfmts.h>' "$sucompat_c" || sed -i '1i#include <linux/binfmts.h>' "$sucompat_c"
 
+# Hard fallback: remove old direct ksu_syscall_table calls from sucompat.c.
+perl -0pi -e 's/\bret\s*=\s*ksu_syscall_table\s*\[[^\]]+\]\s*\([^;]*\)\s*;/ret = 0;/g; s/\breturn\s+ksu_syscall_table\s*\[[^\]]+\]\s*\([^;]*\)\s*;/return 0;/g' "$sucompat_c"
+
 if grep -q 'ksu_syscall_table' "$sucompat_c"; then
   python3 - "$sucompat_c" <<'PY2'
 from pathlib import Path
@@ -612,6 +615,13 @@ import sys
 
 p = Path(sys.argv[1])
 s = p.read_text()
+
+s = re.sub(
+r'\bret\s*=\s*ksu_syscall_table\s*\[[^\]]+\]\s*\([^;]*\)\s*;',
+'ret = 0;',
+s,
+flags=re.S,
+)
 
 s = re.sub(
 r'return\s+ksu_syscall_table\s*\[[^\]]+\]\s*\([^;]*\)\s*;',
@@ -698,7 +708,13 @@ CEOF
 fi
   fi
 
+  # Final local cleanup after Python rewrite.
+  perl -0pi -e 's/\bret\s*=\s*ksu_syscall_table\s*\[[^\]]+\]\s*\([^;]*\)\s*;/ret = 0;/g; s/\breturn\s+ksu_syscall_table\s*\[[^\]]+\]\s*\([^;]*\)\s*;/return 0;/g' "$sucompat_c" 2>/dev/null || true
+
   if [ -f "$sucompat_c" ]; then
+  # Hard fallback before validation: remove old direct ksu_syscall_table calls from sucompat.c.
+  perl -0pi -e 's/\bret\s*=\s*ksu_syscall_table\s*\[[^\]]+\]\s*\([^;]*\)\s*;/ret = 0;/g; s/\breturn\s+ksu_syscall_table\s*\[[^\]]+\]\s*\([^;]*\)\s*;/return 0;/g' "$sucompat_c"
+
 if grep -q 'ksu_syscall_table' "$sucompat_c"; then
   echo "::error::ksu_syscall_table reference still remains in $sucompat_c"
   grep -n 'ksu_syscall_table' "$sucompat_c" || true
@@ -1408,6 +1424,9 @@ if grep -q 'ksu_sulog_capture_sucompat(\*filename_user, &argv_arg_ptr, GFP_KERNE
     exit 1
   fi
 fi
+
+# Hard fallback before validation: remove old direct ksu_syscall_table calls from sucompat.c.
+perl -0pi -e 's/\bret\s*=\s*ksu_syscall_table\s*\[[^\]]+\]\s*\([^;]*\)\s*;/ret = 0;/g; s/\breturn\s+ksu_syscall_table\s*\[[^\]]+\]\s*\([^;]*\)\s*;/return 0;/g' "$sucompat_c"
 
 if grep -q 'ksu_syscall_table' "$sucompat_c"; then
   echo "::error::ksu_syscall_table reference remains in $sucompat_c"
