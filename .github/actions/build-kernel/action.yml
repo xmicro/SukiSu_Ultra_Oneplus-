@@ -963,6 +963,16 @@ runs:
       if: ${{ env.OP_SUSFS == 'true' }}
       env:
         KSU_TYPE: ${{ inputs.ksu_type }}
+    
+        KERNEL_PLATFORM_FOLDER: ${{ env.KERNEL_PLATFORM_FOLDER }}
+        COMMON_KERNEL_FOLDER: ${{ env.COMMON_KERNEL_FOLDER }}
+        SUSFS_FOLDER: ${{ env.SUSFS_FOLDER }}
+        ARTIFACTS_FOLDER: ${{ env.ARTIFACTS_FOLDER }}
+        KSU_FOLDER: ${{ env.KSU_FOLDER }}
+    
+        OP_MODEL: ${{ env.OP_MODEL }}
+        OP_OS_VERSION: ${{ env.OP_OS_VERSION }}
+    
         ANDROID_VER_LOCAL: ${{ env.ANDROID_VER }}
         KERNEL_VER_LOCAL: ${{ env.KERNEL_VER }}
         SUSFS_KERNEL_BRANCH_LOCAL: ${{ env.SUSFS_KERNEL_BRANCH }}
@@ -980,13 +990,48 @@ runs:
         sed -i 's/\r$//' "$SCRIPT"
         chmod +x "$SCRIPT"
     
+        echo "Validating required SUSFS environment..."
+        required_env=(
+          KERNEL_PLATFORM_FOLDER
+          COMMON_KERNEL_FOLDER
+          SUSFS_FOLDER
+          ARTIFACTS_FOLDER
+          OP_MODEL
+          OP_OS_VERSION
+          KSU_FOLDER
+          ANDROID_VER_LOCAL
+          KERNEL_VER_LOCAL
+        )
+    
+        for v in "${required_env[@]}"; do
+          if [ -z "${!v:-}" ]; then
+            echo "::error::Required environment variable '$v' is not set in workflow step"
+            exit 1
+          fi
+          echo "$v=${!v}"
+        done
+    
+        echo "Checking important paths..."
+        for d in \
+          "$KERNEL_PLATFORM_FOLDER" \
+          "$COMMON_KERNEL_FOLDER" \
+          "$SUSFS_FOLDER" \
+          "$ARTIFACTS_FOLDER" \
+          "$KSU_FOLDER"; do
+          if [ ! -e "$d" ]; then
+            echo "::error::Expected path does not exist: $d"
+            exit 1
+          fi
+          echo "✅ Exists: $d"
+        done
+    
         echo "Looking for 10_enable_susfs_for_ksu.patch..."
         FOUND_PATCH="$(find "$GITHUB_WORKSPACE" -type f -name '10_enable_susfs_for_ksu.patch' | head -n1 || true)"
     
         if [ -z "$FOUND_PATCH" ]; then
           echo "::warning::10_enable_susfs_for_ksu.patch was not found anywhere under $GITHUB_WORKSPACE"
           echo "Available patch files:"
-          find "$GITHUB_WORKSPACE/kernel_patches" -type f -name '*.patch' | sort || true
+          find "$GITHUB_WORKSPACE" -type f -name '*.patch' | sort || true
     
           echo ""
           echo "References inside apply_susfs_patches.sh:"
@@ -995,6 +1040,7 @@ runs:
           echo "Found patch: $FOUND_PATCH"
         fi
     
+        echo "Running SUSFS patch script..."
         bash "$SCRIPT"
     
     - name: Add BBG
