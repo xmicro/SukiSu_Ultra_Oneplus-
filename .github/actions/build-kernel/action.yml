@@ -1451,9 +1451,11 @@ runs:
 
         KSU_BUILTIN_DIR="$COMMON_KERNEL_FOLDER/drivers/kernelsu"
         KSU_SOURCE_DIR="$KERNEL_PLATFORM_FOLDER/KernelSU/kernel"
+        KMI="${ANDROID_VER:-unknown}-${KERNEL_VER:-unknown}"
 
         echo "KSU builtin dir: $KSU_BUILTIN_DIR"
         echo "KSU source dir:  $KSU_SOURCE_DIR"
+        echo "Detected KMI:    $KMI"
 
         if [ ! -d "$KSU_BUILTIN_DIR" ]; then
           echo "::warning::Builtin SukiSU directory not found: $KSU_BUILTIN_DIR"
@@ -1745,6 +1747,21 @@ runs:
             "$KSU_BUILTIN_DIR/arch.h"
         )"
 
+        UTIL_H_SRC="$(
+          find_first_header \
+            "util.h" \
+            "$KSU_SOURCE_DIR/include/util.h" \
+            "$KSU_SOURCE_DIR/util.h" \
+            "$KSU_SOURCE_DIR/core/util.h" \
+            "$KSU_SOURCE_DIR/infra/util.h" \
+            "$KSU_SOURCE_DIR/feature/util.h" \
+            "$KSU_BUILTIN_DIR/include/util.h" \
+            "$KSU_BUILTIN_DIR/util.h" \
+            "$KSU_BUILTIN_DIR/core/util.h" \
+            "$KSU_BUILTIN_DIR/infra/util.h" \
+            "$KSU_BUILTIN_DIR/feature/util.h"
+        )"
+
         FEATURE_H_SRC="$(
           find_valid_header is_internal_feature_header \
             "$KSU_SOURCE_DIR/include/feature.h" \
@@ -1841,6 +1858,7 @@ runs:
         echo "Found klog.h:                ${KLOG_SRC:-not found}"
         echo "Found ksu.h:                 ${KSU_H_SRC:-not found}"
         echo "Found arch.h:                ${ARCH_H_SRC:-not found}"
+        echo "Found util.h:                ${UTIL_H_SRC:-not found}"
         echo "Found internal feature.h:    ${FEATURE_H_SRC:-not found}"
         echo "Found policy/uapi feature.h: ${POLICY_FEATURE_SRC:-not found}"
         echo "Found real app_profile.h:    ${APP_PROFILE_SRC:-not found}"
@@ -1874,6 +1892,47 @@ runs:
             "$KSU_BUILTIN_DIR/feature/arch.h"
         else
           echo "::warning::Could not find arch.h in SukiSU source tree"
+        fi
+
+        if [ -n "$UTIL_H_SRC" ]; then
+          echo "Installing util.h layout for SukiSU feature sources"
+
+          install_header_everywhere "$UTIL_H_SRC" \
+            "$KSU_BUILTIN_DIR/util.h" \
+            "$KSU_BUILTIN_DIR/include/util.h" \
+            "$KSU_BUILTIN_DIR/core/util.h" \
+            "$KSU_BUILTIN_DIR/feature/util.h" \
+            "$KSU_BUILTIN_DIR/infra/util.h"
+        else
+          echo "::warning::Could not find util.h in SukiSU source tree"
+
+          if [ "$KERNEL_VER" = "6.12" ]; then
+            echo "::error::Kernel 6.12 SukiSU sucompat.c requires util.h, but no util.h was found."
+            echo "Available SukiSU headers:"
+            find "$KSU_SOURCE_DIR" "$KSU_BUILTIN_DIR" \
+              -type f \
+              -name '*.h' \
+              -print \
+              2>/dev/null | sort | head -n 300 || true
+            exit 1
+          fi
+        fi
+
+        if [ "$KERNEL_VER" = "6.12" ]; then
+          echo "Performing kernel 6.12 util.h hard verification"
+
+          if [ ! -f "$KSU_BUILTIN_DIR/feature/util.h" ]; then
+            echo "::error::Required 6.12 header missing after repair: $KSU_BUILTIN_DIR/feature/util.h"
+            echo "All util.h candidates:"
+            find "$KSU_SOURCE_DIR" "$KSU_BUILTIN_DIR" \
+              -type f \
+              -name 'util.h' \
+              -print \
+              2>/dev/null || true
+            exit 1
+          fi
+
+          echo "✅ Kernel 6.12 util.h repair verified: $KSU_BUILTIN_DIR/feature/util.h"
         fi
 
         if [ -n "$FEATURE_H_SRC" ]; then
@@ -2254,6 +2313,9 @@ runs:
           "$KSU_BUILTIN_DIR/arch.h"
           "$KSU_BUILTIN_DIR/include/arch.h"
           "$KSU_BUILTIN_DIR/feature/arch.h"
+          "$KSU_BUILTIN_DIR/util.h"
+          "$KSU_BUILTIN_DIR/include/util.h"
+          "$KSU_BUILTIN_DIR/feature/util.h"
           "$KSU_BUILTIN_DIR/uapi/sulog.h"
           "$KSU_BUILTIN_DIR/include/uapi/sulog.h"
           "$KSU_BUILTIN_DIR/sulog/uapi/sulog.h"
@@ -2284,6 +2346,11 @@ runs:
             MISSING=$((MISSING + 1))
           fi
         done
+
+        if [ "$KERNEL_VER" = "6.12" ] && [ ! -f "$KSU_BUILTIN_DIR/feature/util.h" ]; then
+          echo "::error::Kernel 6.12 requires $KSU_BUILTIN_DIR/feature/util.h for sucompat.c"
+          exit 1
+        fi
 
         echo "Validating copied app_profile.h files are real headers"
 
@@ -2399,6 +2466,19 @@ runs:
           fi
         done
 
+        echo "Dumping util.h previews:"
+        for f in \
+          "$KSU_BUILTIN_DIR/util.h" \
+          "$KSU_BUILTIN_DIR/include/util.h" \
+          "$KSU_BUILTIN_DIR/core/util.h" \
+          "$KSU_BUILTIN_DIR/feature/util.h" \
+          "$KSU_BUILTIN_DIR/infra/util.h"; do
+          if [ -f "$f" ]; then
+            echo "=== $f ==="
+            sed -n '1,120p' "$f" || true
+          fi
+        done
+
         echo "Dumping selinux/supercall uapi header previews:"
         for f in \
           "$KSU_BUILTIN_DIR/uapi/selinux.h" \
@@ -2435,6 +2515,7 @@ runs:
           -name 'ksu.h' \
           -o -name 'klog.h' \
           -o -name 'arch.h' \
+          -o -name 'util.h' \
           -o -name 'sulog.h' \
           -o -name 'selinux.h' \
           -o -name 'supercall.h' \
@@ -2449,11 +2530,11 @@ runs:
 
         echo "Dumping sucompat compatibility state:"
         if [ -f "$SUCOMPAT_C" ]; then
-          grep -nE 'jump_label|DEFINE_STATIC_KEY_TRUE|ksu_su_compat_enabled|static_branch|KSU_FEATURE_SU_COMPAT' "$SUCOMPAT_C" || true
+          grep -nE 'util\.h|jump_label|DEFINE_STATIC_KEY_TRUE|ksu_su_compat_enabled|static_branch|KSU_FEATURE_SU_COMPAT' "$SUCOMPAT_C" || true
         fi
 
         if [ -f "$SUCOMPAT_H" ]; then
-          grep -nE 'jump_label|ksu_su_compat_enabled|static_key_true' "$SUCOMPAT_H" || true
+          grep -nE 'util\.h|jump_label|ksu_su_compat_enabled|static_key_true' "$SUCOMPAT_H" || true
         fi
 
         echo "Dumping syscall_event_bridge compatibility state:"
