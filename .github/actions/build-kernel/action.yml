@@ -1059,6 +1059,159 @@ runs:
         echo "✅ SukiSU Ultra added commit: ${KSU_COMMIT_SHA:0:8}"
         echo "::endgroup::"
 
+    - name: Fix SukiSU Ultra header layout for 6.12
+      shell: bash
+      if: ${{ inputs.ksu_type == 'SUKISU' }}
+      run: |
+        set -euo pipefail
+        echo "::group::Fix SukiSU Ultra header layout for 6.12"
+
+        KSU_DRIVER_DIR="$COMMON_KERNEL_FOLDER/drivers/kernelsu"
+
+        if [ ! -d "$KSU_DRIVER_DIR" ]; then
+          echo "::warning::drivers/kernelsu not found at expected path: $KSU_DRIVER_DIR"
+          echo "Searching for kernelsu driver directory..."
+
+          FOUND_KSU_DRIVER_DIR="$(
+            find "$COMMON_KERNEL_FOLDER" "$KERNEL_PLATFORM_FOLDER" \
+              -type d \
+              -path '*/drivers/kernelsu' \
+              -print \
+              -quit 2>/dev/null || true
+          )"
+
+          if [ -n "$FOUND_KSU_DRIVER_DIR" ]; then
+            KSU_DRIVER_DIR="$FOUND_KSU_DRIVER_DIR"
+          fi
+        fi
+
+        if [ ! -d "$KSU_DRIVER_DIR" ]; then
+          echo "::error::Unable to locate drivers/kernelsu directory"
+          find "$KERNEL_PLATFORM_FOLDER" -maxdepth 5 -type d \( -iname '*kernelsu*' -o -iname '*ksu*' \) -print || true
+          exit 1
+        fi
+
+        echo "Using KSU driver directory: $KSU_DRIVER_DIR"
+
+        find_header() {
+          local name="$1"
+
+          find "$KERNEL_PLATFORM_FOLDER/KernelSU" "$KSU_DRIVER_DIR" \
+            -type f \
+            -name "$name" \
+            -print \
+            -quit 2>/dev/null || true
+        }
+
+        copy_header_to_dir() {
+          local header="$1"
+          local dest_dir="$2"
+
+          local src
+          src="$(find_header "$header")"
+
+          if [ -z "$src" ]; then
+            echo "::warning::Header not found in SukiSU tree: $header"
+            return 0
+          fi
+
+          mkdir -p "$dest_dir"
+
+          if [ "$src" = "$dest_dir/$header" ]; then
+            echo "Header already in place: $dest_dir/$header"
+            return 0
+          fi
+
+          cp -f "$src" "$dest_dir/$header"
+          echo "Copied $header -> $dest_dir/"
+        }
+
+        common_headers=(
+          klog.h
+          arch.h
+          feature.h
+          util.h
+          selinux.h
+          supercall.h
+          app_profile.h
+          manager.h
+          whitelist.h
+          allowlist.h
+          kernel_compat.h
+        )
+
+        for h in "${common_headers[@]}"; do
+          copy_header_to_dir "$h" "$KSU_DRIVER_DIR"
+          copy_header_to_dir "$h" "$KSU_DRIVER_DIR/core"
+          copy_header_to_dir "$h" "$KSU_DRIVER_DIR/feature"
+          copy_header_to_dir "$h" "$KSU_DRIVER_DIR/policy"
+        done
+
+        # allowlist.h includes "uapi/app_profile.h".
+        # Quoted include from policy/allowlist.h first searches policy/uapi/.
+        copy_header_to_dir "app_profile.h" "$KSU_DRIVER_DIR/policy/uapi"
+
+        # Also place it in drivers/kernelsu/uapi for include paths that resolve from driver root.
+        copy_header_to_dir "app_profile.h" "$KSU_DRIVER_DIR/uapi"
+
+        # Some trees keep generated/internal headers under include/uapi-like paths.
+        mkdir -p "$KSU_DRIVER_DIR/include/uapi" "$KSU_DRIVER_DIR/include/linux"
+        copy_header_to_dir "app_profile.h" "$KSU_DRIVER_DIR/include/uapi"
+        copy_header_to_dir "klog.h" "$KSU_DRIVER_DIR/include/linux"
+        copy_header_to_dir "arch.h" "$KSU_DRIVER_DIR/include/linux"
+
+        echo ""
+        echo "Final SukiSU header check:"
+
+        required_headers=(
+          "$KSU_DRIVER_DIR/feature/klog.h"
+          "$KSU_DRIVER_DIR/feature/arch.h"
+          "$KSU_DRIVER_DIR/core/klog.h"
+          "$KSU_DRIVER_DIR/core/arch.h"
+          "$KSU_DRIVER_DIR/policy/uapi/app_profile.h"
+          "$KSU_DRIVER_DIR/uapi/app_profile.h"
+          "$KSU_DRIVER_DIR/klog.h"
+          "$KSU_DRIVER_DIR/arch.h"
+        )
+
+        missing=0
+
+        for h in "${required_headers[@]}"; do
+          if [ -f "$h" ]; then
+            echo "✅ $h"
+          else
+            echo "::warning::Still missing: $h"
+            missing=1
+          fi
+        done
+
+        echo ""
+        echo "Nearby SukiSU headers:"
+        find "$KSU_DRIVER_DIR" \
+          -maxdepth 4 \
+          -type f \
+          \( \
+            -name 'klog.h' \
+            -o -name 'arch.h' \
+            -o -name 'app_profile.h' \
+            -o -name 'feature.h' \
+            -o -name 'util.h' \
+            -o -name 'selinux.h' \
+            -o -name 'supercall.h' \
+            -o -name 'manager.h' \
+            -o -name 'whitelist.h' \
+            -o -name 'allowlist.h' \
+            -o -name 'kernel_compat.h' \
+          \) \
+          -print || true
+
+        if [ "$missing" = 1 ]; then
+          echo "::warning::Some expected SukiSU headers are still missing. Build may fail if this SukiSU commit changed its header layout."
+        fi
+
+        echo "✅ SukiSU Ultra header layout fix completed"
+        echo "::endgroup::"
+
     - name: Apply Patches SukiSU Ultra
       shell: bash
       if: ${{ env.OP_SUSFS == 'true' }}
@@ -2540,15 +2693,6 @@ runs:
     - name: Upload Debug Artifacts
       if: ${{ always() && !cancelled() && inputs.debug == 'true' }}
       continue-on-error: true
-      uses: actions/upload-artifact@v7
-      with:
-        name: ${{ env.DEBUG_ZIP_NAME }}
-        path: ${{ env.DEBUG_ARTIFACTS_FOLDER }}
-        compression-level: 9
-        retention-days: 90
-
-    - name: Upload Debug Artifacts
-      if: ${{ always() && !cancelled() && inputs.debug == 'true' }}
       uses: actions/upload-artifact@v7
       with:
         name: ${{ env.DEBUG_ZIP_NAME }}
