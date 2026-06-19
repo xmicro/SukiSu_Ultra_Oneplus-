@@ -1059,12 +1059,12 @@ runs:
         echo "✅ SukiSU Ultra added commit: ${KSU_COMMIT_SHA:0:8}"
         echo "::endgroup::"
 
-    - name: Fix SukiSU Ultra header layout for 6.12
+    - name: Normalize SukiSU Ultra header layout
       shell: bash
       if: ${{ inputs.ksu_type == 'SUKISU' }}
       run: |
         set -euo pipefail
-        echo "::group::Fix SukiSU Ultra header layout for 6.12"
+        echo "::group::Normalize SukiSU Ultra header layout"
 
         KSU_DRIVER_DIR="$COMMON_KERNEL_FOLDER/drivers/kernelsu"
 
@@ -1162,18 +1162,43 @@ runs:
           copy_header_to_dir "$h" "$KSU_DRIVER_DIR/policy"
         done
 
-        # allowlist.h includes "uapi/app_profile.h".
-        # Quoted include from policy/allowlist.h first searches policy/uapi/.
-        copy_header_to_dir "app_profile.h" "$KSU_DRIVER_DIR/policy/uapi"
+        # Some SukiSU headers include "uapi/*.h".
+        # Quoted includes search relative to the including file first, so prepare uapi/
+        # under policy/, feature/, core/, plus root-level fallbacks.
+        uapi_headers=(
+          app_profile.h
+          feature.h
+          klog.h
+          arch.h
+          util.h
+          selinux.h
+          supercall.h
+          allowlist.h
+          kernel_compat.h
+        )
 
-        # Also place it in drivers/kernelsu/uapi for include paths that resolve from driver root.
-        copy_header_to_dir "app_profile.h" "$KSU_DRIVER_DIR/uapi"
+        mkdir -p \
+          "$KSU_DRIVER_DIR/policy/uapi" \
+          "$KSU_DRIVER_DIR/feature/uapi" \
+          "$KSU_DRIVER_DIR/core/uapi" \
+          "$KSU_DRIVER_DIR/uapi" \
+          "$KSU_DRIVER_DIR/include/uapi" \
+          "$KSU_DRIVER_DIR/include/linux"
 
-        # Some trees keep generated/internal headers under include/uapi-like paths.
-        mkdir -p "$KSU_DRIVER_DIR/include/uapi" "$KSU_DRIVER_DIR/include/linux"
-        copy_header_to_dir "app_profile.h" "$KSU_DRIVER_DIR/include/uapi"
+        for h in "${uapi_headers[@]}"; do
+          copy_header_to_dir "$h" "$KSU_DRIVER_DIR/policy/uapi"
+          copy_header_to_dir "$h" "$KSU_DRIVER_DIR/feature/uapi"
+          copy_header_to_dir "$h" "$KSU_DRIVER_DIR/core/uapi"
+          copy_header_to_dir "$h" "$KSU_DRIVER_DIR/uapi"
+          copy_header_to_dir "$h" "$KSU_DRIVER_DIR/include/uapi"
+        done
+
+        # include/linux fallbacks for stricter or altered include paths.
         copy_header_to_dir "klog.h" "$KSU_DRIVER_DIR/include/linux"
         copy_header_to_dir "arch.h" "$KSU_DRIVER_DIR/include/linux"
+        copy_header_to_dir "feature.h" "$KSU_DRIVER_DIR/include/linux"
+        copy_header_to_dir "app_profile.h" "$KSU_DRIVER_DIR/include/linux"
+        copy_header_to_dir "kernel_compat.h" "$KSU_DRIVER_DIR/include/linux"
 
         echo ""
         echo "Final SukiSU header check:"
@@ -1184,7 +1209,12 @@ runs:
           "$KSU_DRIVER_DIR/core/klog.h"
           "$KSU_DRIVER_DIR/core/arch.h"
           "$KSU_DRIVER_DIR/policy/uapi/app_profile.h"
+          "$KSU_DRIVER_DIR/policy/uapi/feature.h"
+          "$KSU_DRIVER_DIR/feature/uapi/feature.h"
+          "$KSU_DRIVER_DIR/core/uapi/feature.h"
           "$KSU_DRIVER_DIR/uapi/app_profile.h"
+          "$KSU_DRIVER_DIR/uapi/feature.h"
+          "$KSU_DRIVER_DIR/include/uapi/feature.h"
           "$KSU_DRIVER_DIR/klog.h"
           "$KSU_DRIVER_DIR/arch.h"
         )
@@ -1202,27 +1232,15 @@ runs:
 
         echo ""
         echo "Nearby SukiSU headers:"
-        find "$KSU_DRIVER_DIR" \
-          -maxdepth 4 \
-          -type f \
-          \( \
-            -name 'klog.h' \
-            -o -name 'arch.h' \
-            -o -name 'app_profile.h' \
-            -o -name 'feature.h' \
-            -o -name 'util.h' \
-            -o -name 'selinux.h' \
-            -o -name 'supercall.h' \
-            -o -name 'allowlist.h' \
-            -o -name 'kernel_compat.h' \
-          \) \
-          -print || true
+        find "$KSU_DRIVER_DIR" -maxdepth 4 -type f \
+          | grep -E '/(klog|arch|app_profile|feature|util|selinux|supercall|allowlist|kernel_compat)\.h$' \
+          || true
 
         if [ "$missing" = 1 ]; then
           echo "::warning::Some expected SukiSU headers are still missing. Build may fail if this SukiSU commit changed its header layout."
         fi
 
-        echo "✅ SukiSU Ultra header layout fix completed"
+        echo "✅ SukiSU Ultra header layout normalization completed"
         echo "::endgroup::"
 
     - name: Apply Patches SukiSU Ultra
