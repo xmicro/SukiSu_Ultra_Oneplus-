@@ -3532,99 +3532,60 @@ runs:
       run: |
         set -euo pipefail
         echo "::group::Create kernel ZIP package"
-
-        DEFAULT_IMAGE="$COMMON_KERNEL_FOLDER/out/arch/arm64/boot/Image"
-        DIST_IMAGE="$KERNEL_PLATFORM_FOLDER/out/${ANDROID_VER}-${KERNEL_VER}/dist/Image"
-        BAZEL_IMAGE="$KERNEL_PLATFORM_FOLDER/bazel-bin/common/kernel_aarch64/Image"
-
-        IMAGE_PATH="${FINAL_IMAGE_PATH:-$DEFAULT_IMAGE}"
-
-        if [ ! -f "$IMAGE_PATH" ]; then
-          if [ -f "$DIST_IMAGE" ]; then
-            IMAGE_PATH="$DIST_IMAGE"
-          elif [ -f "$BAZEL_IMAGE" ]; then
-            IMAGE_PATH="$BAZEL_IMAGE"
-          elif [ -f "$DEFAULT_IMAGE" ]; then
-            IMAGE_PATH="$DEFAULT_IMAGE"
-          fi
+        
+        IMAGE_PATH="$COMMON_KERNEL_FOLDER/out/arch/arm64/boot/Image"
+        
+        if [ -f "$KERNEL_PLATFORM_FOLDER/out/$OP_ANDROID_VERSION-$OP_KERNEL_VERSION/dist/Image" ]; then
+          IMAGE_PATH="$KERNEL_PLATFORM_FOLDER/out/$OP_ANDROID_VERSION-$OP_KERNEL_VERSION/dist/Image"
+        elif [ -f "$KERNEL_PLATFORM_FOLDER/bazel-bin/common/kernel_aarch64/Image" ]; then
+          IMAGE_PATH="$KERNEL_PLATFORM_FOLDER/bazel-bin/common/kernel_aarch64/Image"
         fi
-
-        echo "Image candidates:"
-        echo "  FINAL_IMAGE_PATH: ${FINAL_IMAGE_PATH:-unset}"
-        echo "  Default:          $DEFAULT_IMAGE"
-        echo "  Dist:             $DIST_IMAGE"
-        echo "  Bazel:            $BAZEL_IMAGE"
-        echo "Selected Image:     $IMAGE_PATH"
-
+        
         if [ ! -f "$IMAGE_PATH" ]; then
-          echo "::error::Built Image not found at selected path: $IMAGE_PATH"
-          echo "Searching for Image files under kernel platform:"
-          find "$KERNEL_PLATFORM_FOLDER" -type f -name Image -print 2>/dev/null | head -n 50 || true
+          echo "::error::Built Image not found at: $IMAGE_PATH"
           exit 1
         fi
-
-        mkdir -p "$AK3_FOLDER"
+        
         cp "$IMAGE_PATH" "$AK3_FOLDER/Image"
-
-        if [ -f "${ARTIFACTS_FOLDER}/${OP_MODEL}_${OP_OS_VERSION}.txt" ]; then
-          mv "${ARTIFACTS_FOLDER}/${OP_MODEL}_${OP_OS_VERSION}.txt" "$AK3_FOLDER/"
-        else
-          echo "::warning::Metadata txt not found, creating fallback metadata file"
-          {
-            echo "${KERNEL_FULL_VER:-unknown}"
-            echo "${OP_OS_VERSION:-unknown}"
-            echo "SUKISU"
-            echo "${KSUVER:-unknown}"
-            echo "${KSU_FULL_NAME:-unknown}"
-            if [ "${OP_SUSFS:-false}" = "true" ]; then
-              echo "${SUSVER:-unknown}"
-            fi
-          } > "$AK3_FOLDER/${OP_MODEL}_${OP_OS_VERSION}.txt"
-        fi
-
+        
+        mv "${ARTIFACTS_FOLDER}/${OP_MODEL}_${OP_OS_VERSION}.txt" "$AK3_FOLDER/"
         cd "$AK3_FOLDER"
-
-        sed -i 's/do.check_boot_version=.*/do.check_boot_version=1/' anykernel.sh || true
-
-        ZIP_MODEL="$(echo "$OP_MODEL" | sed 's/-[0-9]\+\.[0-9]\+\.[0-9]\+$//')"
-
-        if [ "${OP_SUSFS:-false}" = "true" ]; then
-          ZIP_NAME="AK3_${ZIP_MODEL}_${OP_OS_VERSION}_${KERNEL_FULL_VER}_SUKISU_${KSUVER:-unknown}_SuSFS_${SUSVER:-unknown}.zip"
+        
+        sed -i 's/do.check_boot_version=.*/do.check_boot_version=1/' anykernel.sh
+        
+        if [ "${{ env.OP_SUSFS }}" = true ]; then
+          ZIP_NAME="AK3_${OP_MODEL}_${OP_OS_VERSION}_${KERNEL_FULL_VER}_${{ inputs.ksu_type }}_${KSUVER:-unknown}_SuSFS_${SUSVER:-unknown}.zip"
         else
-          ZIP_NAME="AK3_${ZIP_MODEL}_${OP_OS_VERSION}_${KERNEL_FULL_VER}_SUKISU_${KSUVER:-unknown}.zip"
+          ZIP_NAME="AK3_${OP_MODEL}_${OP_OS_VERSION}_${KERNEL_FULL_VER}_${{ inputs.ksu_type }}_${KSUVER:-unknown}.zip"
         fi
-
         mkdir -p "$ARTIFACTS_FOLDER"
-
-        rm -f "$ZIP_NAME"
-
+        
+        echo "Creating flashable ZIP: $ZIP_NAME"
+        
         if ! zip -r9 "$ZIP_NAME" ./* \
-          -x "*.git*" \
-          -x "$ZIP_NAME" \
-          -x "README.md" 2>&1 | tee /tmp/zip.log; then
+             -x "*.git*" \
+             -x "$ZIP_NAME" \
+             -x "README.md" 2>&1 | tee /tmp/zip.log; then
           echo "::error::Failed to create ZIP package"
           exit 1
         fi
-
+        
         mv "$ZIP_NAME" "$ARTIFACTS_FOLDER/"
-
+        
         find "$ARTIFACTS_FOLDER" -maxdepth 1 -type f ! -name "$ZIP_NAME" -delete
-
-        ZIP_SIZE="$(stat -c%s "$ARTIFACTS_FOLDER/$ZIP_NAME")"
-        ZIP_SHA256="$(sha256sum "$ARTIFACTS_FOLDER/$ZIP_NAME" | awk '{print $1}')"
-
-        {
-          echo "zip_sha256=$ZIP_SHA256"
-          echo "zip_name=$ZIP_NAME"
-        } >> "$GITHUB_OUTPUT"
-
+        
+        ZIP_SIZE=$(stat -c%s "$ARTIFACTS_FOLDER/$ZIP_NAME")
+        ZIP_SHA256=$(sha256sum "$ARTIFACTS_FOLDER/$ZIP_NAME" | awk '{print $1}')
+        printf 'zip_sha256=%s\n' "$ZIP_SHA256" >> "$GITHUB_OUTPUT"
+        
+        echo "zip_name=$ZIP_NAME" >> "$GITHUB_OUTPUT"
         echo "ZIP_NAME=$ZIP_NAME" >> "$GITHUB_ENV"
-
+        
+        echo ""
         echo "✅ Kernel ZIP created successfully"
-        echo "Name: $ZIP_NAME"
-        echo "Size: $(numfmt --to=iec-i --suffix=B "$ZIP_SIZE")"
-        echo "SHA256: $ZIP_SHA256"
-
+        echo "   Name: $ZIP_NAME"
+        echo "   Size: $(numfmt --to=iec-i --suffix=B "$ZIP_SIZE")"
+        echo "   SHA256: $ZIP_SHA256"
         echo "::endgroup::"
 
     - name: Final Build Summary
@@ -3763,22 +3724,22 @@ runs:
         compression-level: 9
         retention-days: 90
 
+    - name: Upload Debug Artifacts
+      if: ${{ always() && !cancelled() && inputs.debug == 'true' }}
+      uses: actions/upload-artifact@v7
+      with:
+        name: ${{ env.DEBUG_ZIP_NAME }}
+        path: ${{ env.DEBUG_ARTIFACTS_FOLDER }}
+        compression-level: 9
+        retention-days: 90
+
     - name: Upload Artifacts
-      if: ${{ steps.create_zip.conclusion == 'success' }}
+      if: success() && steps.create_zip.conclusion == 'success'
       uses: actions/upload-artifact@v7
       with:
         name: ${{ env.ZIP_NAME }}
         path: ${{ env.ARTIFACTS_FOLDER }}/${{ env.ZIP_NAME }}
-        compression-level: 0
-        retention-days: 90
-
-    - name: Upload ccache log
-      if: ${{ always() && inputs.debug == 'true' && steps.build_kernel_step.conclusion == 'success' }}
-      continue-on-error: true
-      uses: actions/upload-artifact@v7
-      with:
-        name: "${{ env.OP_MODEL }}_${{ env.OP_OS_VERSION }}_${{ env.KERNEL_FULL_VER }}_ccache.log"
-        path: ${{ env.CCACHE_LOGFILE }}
+        archive: false
         compression-level: 0
         retention-days: 90
 
