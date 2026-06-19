@@ -1144,6 +1144,7 @@ runs:
         }
 
         common_headers=(
+          ksu.h
           klog.h
           arch.h
           feature.h
@@ -1153,21 +1154,34 @@ runs:
           app_profile.h
           allowlist.h
           kernel_compat.h
+          sulog.h
+          event.h
+        )
+
+        common_dest_dirs=(
+          "$KSU_DRIVER_DIR"
+          "$KSU_DRIVER_DIR/core"
+          "$KSU_DRIVER_DIR/feature"
+          "$KSU_DRIVER_DIR/policy"
+          "$KSU_DRIVER_DIR/sulog"
         )
 
         for h in "${common_headers[@]}"; do
-          copy_header_to_dir "$h" "$KSU_DRIVER_DIR"
-          copy_header_to_dir "$h" "$KSU_DRIVER_DIR/core"
-          copy_header_to_dir "$h" "$KSU_DRIVER_DIR/feature"
-          copy_header_to_dir "$h" "$KSU_DRIVER_DIR/policy"
+          for d in "${common_dest_dirs[@]}"; do
+            copy_header_to_dir "$h" "$d"
+          done
         done
 
         # Some SukiSU headers include "uapi/*.h".
-        # Quoted includes search relative to the including file first, so prepare uapi/
-        # under policy/, feature/, core/, plus root-level fallbacks.
+        # Quoted includes search relative to the including file first.
+        # Example:
+        #   policy/feature.h includes "uapi/feature.h" -> policy/uapi/feature.h
+        #   sulog/event.h includes "uapi/sulog.h"      -> sulog/uapi/sulog.h
         uapi_headers=(
           app_profile.h
           feature.h
+          sulog.h
+          ksu.h
           klog.h
           arch.h
           util.h
@@ -1175,35 +1189,56 @@ runs:
           supercall.h
           allowlist.h
           kernel_compat.h
+          event.h
         )
 
-        mkdir -p \
-          "$KSU_DRIVER_DIR/policy/uapi" \
-          "$KSU_DRIVER_DIR/feature/uapi" \
-          "$KSU_DRIVER_DIR/core/uapi" \
-          "$KSU_DRIVER_DIR/uapi" \
-          "$KSU_DRIVER_DIR/include/uapi" \
-          "$KSU_DRIVER_DIR/include/linux"
+        uapi_dest_dirs=(
+          "$KSU_DRIVER_DIR/policy/uapi"
+          "$KSU_DRIVER_DIR/feature/uapi"
+          "$KSU_DRIVER_DIR/core/uapi"
+          "$KSU_DRIVER_DIR/sulog/uapi"
+          "$KSU_DRIVER_DIR/uapi"
+          "$KSU_DRIVER_DIR/include/uapi"
+        )
+
+        for d in "${uapi_dest_dirs[@]}"; do
+          mkdir -p "$d"
+        done
+
+        mkdir -p "$KSU_DRIVER_DIR/include/linux"
 
         for h in "${uapi_headers[@]}"; do
-          copy_header_to_dir "$h" "$KSU_DRIVER_DIR/policy/uapi"
-          copy_header_to_dir "$h" "$KSU_DRIVER_DIR/feature/uapi"
-          copy_header_to_dir "$h" "$KSU_DRIVER_DIR/core/uapi"
-          copy_header_to_dir "$h" "$KSU_DRIVER_DIR/uapi"
-          copy_header_to_dir "$h" "$KSU_DRIVER_DIR/include/uapi"
+          for d in "${uapi_dest_dirs[@]}"; do
+            copy_header_to_dir "$h" "$d"
+          done
         done
 
         # include/linux fallbacks for stricter or altered include paths.
-        copy_header_to_dir "klog.h" "$KSU_DRIVER_DIR/include/linux"
-        copy_header_to_dir "arch.h" "$KSU_DRIVER_DIR/include/linux"
-        copy_header_to_dir "feature.h" "$KSU_DRIVER_DIR/include/linux"
-        copy_header_to_dir "app_profile.h" "$KSU_DRIVER_DIR/include/linux"
-        copy_header_to_dir "kernel_compat.h" "$KSU_DRIVER_DIR/include/linux"
+        linux_fallback_headers=(
+          ksu.h
+          klog.h
+          arch.h
+          feature.h
+          app_profile.h
+          sulog.h
+          kernel_compat.h
+          util.h
+          selinux.h
+          supercall.h
+          event.h
+        )
+
+        for h in "${linux_fallback_headers[@]}"; do
+          copy_header_to_dir "$h" "$KSU_DRIVER_DIR/include/linux"
+        done
 
         echo ""
         echo "Final SukiSU header check:"
 
         required_headers=(
+          "$KSU_DRIVER_DIR/ksu.h"
+          "$KSU_DRIVER_DIR/core/ksu.h"
+          "$KSU_DRIVER_DIR/feature/ksu.h"
           "$KSU_DRIVER_DIR/feature/klog.h"
           "$KSU_DRIVER_DIR/feature/arch.h"
           "$KSU_DRIVER_DIR/core/klog.h"
@@ -1212,9 +1247,12 @@ runs:
           "$KSU_DRIVER_DIR/policy/uapi/feature.h"
           "$KSU_DRIVER_DIR/feature/uapi/feature.h"
           "$KSU_DRIVER_DIR/core/uapi/feature.h"
+          "$KSU_DRIVER_DIR/sulog/uapi/sulog.h"
           "$KSU_DRIVER_DIR/uapi/app_profile.h"
           "$KSU_DRIVER_DIR/uapi/feature.h"
+          "$KSU_DRIVER_DIR/uapi/sulog.h"
           "$KSU_DRIVER_DIR/include/uapi/feature.h"
+          "$KSU_DRIVER_DIR/include/uapi/sulog.h"
           "$KSU_DRIVER_DIR/klog.h"
           "$KSU_DRIVER_DIR/arch.h"
         )
@@ -1232,8 +1270,8 @@ runs:
 
         echo ""
         echo "Nearby SukiSU headers:"
-        find "$KSU_DRIVER_DIR" -maxdepth 4 -type f \
-          | grep -E '/(klog|arch|app_profile|feature|util|selinux|supercall|allowlist|kernel_compat)\.h$' \
+        find "$KSU_DRIVER_DIR" -maxdepth 5 -type f \
+          | grep -E '/(ksu|klog|arch|app_profile|feature|sulog|event|util|selinux|supercall|allowlist|kernel_compat)\.h$' \
           || true
 
         if [ "$missing" = 1 ]; then
