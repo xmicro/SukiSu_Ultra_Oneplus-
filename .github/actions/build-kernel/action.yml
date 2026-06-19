@@ -1108,7 +1108,12 @@ runs:
           local dest_dir="$2"
 
           local src
+          local dest
+          local src_real
+          local dest_real
+
           src="$(find_header "$header")"
+          dest="$dest_dir/$header"
 
           if [ -z "$src" ]; then
             echo "::warning::Header not found in SukiSU tree: $header"
@@ -1117,13 +1122,25 @@ runs:
 
           mkdir -p "$dest_dir"
 
-          if [ "$src" = "$dest_dir/$header" ]; then
-            echo "Header already in place: $dest_dir/$header"
+          src_real="$(readlink -f "$src" 2>/dev/null || printf '%s' "$src")"
+          dest_real="$(readlink -f "$dest" 2>/dev/null || printf '%s' "$dest")"
+
+          if [ "$src_real" = "$dest_real" ]; then
+            echo "Header already in place or same inode: $dest"
             return 0
           fi
 
-          cp -f "$src" "$dest_dir/$header"
-          echo "Copied $header -> $dest_dir/"
+          if [ -f "$dest" ] && cmp -s "$src" "$dest"; then
+            echo "Header already identical: $dest"
+            return 0
+          fi
+
+          if cp -f "$src" "$dest"; then
+            echo "Copied $header -> $dest_dir/"
+          else
+            echo "::warning::Failed to copy $header from $src to $dest, continuing"
+            return 0
+          fi
         }
 
         common_headers=(
@@ -1134,8 +1151,6 @@ runs:
           selinux.h
           supercall.h
           app_profile.h
-          manager.h
-          whitelist.h
           allowlist.h
           kernel_compat.h
         )
@@ -1198,8 +1213,6 @@ runs:
             -o -name 'util.h' \
             -o -name 'selinux.h' \
             -o -name 'supercall.h' \
-            -o -name 'manager.h' \
-            -o -name 'whitelist.h' \
             -o -name 'allowlist.h' \
             -o -name 'kernel_compat.h' \
           \) \
