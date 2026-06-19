@@ -1107,16 +1107,7 @@ runs:
             cp "$SUSFS_FOLDER/kernel_patches/include/linux/"* "$COMMON_KERNEL_FOLDER/include/linux/" || true
           fi
         fi
-
-        if [ -n "${OP_ZRAM:-}" ] && [[ "$OP_ZRAM" == 1* ]]; then
-          echo "Fetching ZRAM patches"
-
-          cp -r "$CONFIG_FOLDER/SukiSU_patch/other/zram/lz4k/include/linux/"* "$COMMON_KERNEL_FOLDER/include/linux/" || true
-          cp -r "$CONFIG_FOLDER/SukiSU_patch/other/zram/lz4k/lib/"* "$COMMON_KERNEL_FOLDER/lib/" || true
-          cp -r "$CONFIG_FOLDER/SukiSU_patch/other/zram/lz4k/crypto/"* "$COMMON_KERNEL_FOLDER/crypto/" || true
-          cp -r "$CONFIG_FOLDER/SukiSU_patch/other/zram/lz4k_oplus" "$COMMON_KERNEL_FOLDER/lib/" || true
-        fi
-
+        
         cd "$COMMON_KERNEL_FOLDER"
 
         SUBLEVEL="$(grep '^SUBLEVEL *=' Makefile | head -n1 | cut -d= -f2 | tr -d ' ')"
