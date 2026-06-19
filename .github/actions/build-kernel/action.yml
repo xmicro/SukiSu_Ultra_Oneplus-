@@ -1103,6 +1103,21 @@ runs:
             -quit 2>/dev/null || true
         }
 
+        find_uapi_header() {
+          local name="$1"
+
+          # Prefer real UAPI headers first.
+          find "$KERNEL_PLATFORM_FOLDER/KernelSU" "$KSU_DRIVER_DIR" \
+            -type f \
+            \( \
+              -path "*/uapi/$name" \
+              -o -path "*/include/uapi/$name" \
+              -o -path "*/kernel/uapi/$name" \
+            \) \
+            -print \
+            -quit 2>/dev/null || true
+        }
+
         copy_header_to_dir() {
           local header="$1"
           local dest_dir="$2"
@@ -1143,6 +1158,65 @@ runs:
           fi
         }
 
+        copy_uapi_header_to_dir() {
+          local header="$1"
+          local dest_dir="$2"
+
+          local src
+          local dest
+          local src_real
+          local dest_real
+
+          src="$(find_uapi_header "$header")"
+
+          if [ -z "$src" ]; then
+            src="$(find_header "$header")"
+          fi
+
+          dest="$dest_dir/$header"
+
+          if [ -z "$src" ]; then
+            echo "::warning::UAPI header not found in SukiSU tree: $header"
+            return 0
+          fi
+
+          mkdir -p "$dest_dir"
+
+          src_real="$(readlink -f "$src" 2>/dev/null || printf '%s' "$src")"
+          dest_real="$(readlink -f "$dest" 2>/dev/null || printf '%s' "$dest")"
+
+          if [ "$src_real" = "$dest_real" ]; then
+            echo "UAPI header already in place or same inode: $dest"
+            return 0
+          fi
+
+          if [ -f "$dest" ] && cmp -s "$src" "$dest"; then
+            echo "UAPI header already identical: $dest"
+            return 0
+          fi
+
+          if cp -f "$src" "$dest"; then
+            echo "Copied UAPI $header -> $dest_dir/ from $src"
+          else
+            echo "::warning::Failed to copy UAPI $header from $src to $dest, continuing"
+            return 0
+          fi
+        }
+
+        echo ""
+        echo "Available feature.h candidates:"
+        find "$KERNEL_PLATFORM_FOLDER/KernelSU" "$KSU_DRIVER_DIR" \
+          -type f \
+          -name 'feature.h' \
+          -print 2>/dev/null || true
+
+        echo ""
+        echo "Available sulog.h candidates:"
+        find "$KERNEL_PLATFORM_FOLDER/KernelSU" "$KSU_DRIVER_DIR" \
+          -type f \
+          -name 'sulog.h' \
+          -print 2>/dev/null || true
+
         common_headers=(
           ksu.h
           klog.h
@@ -1172,11 +1246,8 @@ runs:
           done
         done
 
-        # Some SukiSU headers include "uapi/*.h".
-        # Quoted includes search relative to the including file first.
-        # Example:
-        #   policy/feature.h includes "uapi/feature.h" -> policy/uapi/feature.h
-        #   sulog/event.h includes "uapi/sulog.h"      -> sulog/uapi/sulog.h
+        # UAPI headers must come from real */uapi/*.h when possible.
+        # Do not blindly copy policy/feature.h into uapi/feature.h.
         uapi_headers=(
           app_profile.h
           feature.h
@@ -1209,11 +1280,10 @@ runs:
 
         for h in "${uapi_headers[@]}"; do
           for d in "${uapi_dest_dirs[@]}"; do
-            copy_header_to_dir "$h" "$d"
+            copy_uapi_header_to_dir "$h" "$d"
           done
         done
 
-        # include/linux fallbacks for stricter or altered include paths.
         linux_fallback_headers=(
           ksu.h
           klog.h
@@ -1231,6 +1301,58 @@ runs:
         for h in "${linux_fallback_headers[@]}"; do
           copy_header_to_dir "$h" "$KSU_DRIVER_DIR/include/linux"
         done
+
+        echo ""
+        echo "Validating staged uapi/feature.h content..."
+
+        FEATURE_UAPI_CANDIDATES=(
+          "$KSU_DRIVER_DIR/policy/uapi/feature.h"
+          "$KSU_DRIVER_DIR/feature/uapi/feature.h"
+          "$KSU_DRIVER_DIR/core/uapi/feature.h"
+          "$KSU_DRIVER_DIR/uapi/feature.h"
+          "$KSU_DRIVER_DIR/include/uapi/feature.h"
+        )
+
+        feature_defs_ok=0
+
+        for f in "${FEATURE_UAPI_CANDIDATES[@]}"; do
+          if [ -f "$f" ]; then
+            echo "Checking $f"
+            if grep -q 'KSU_FEATURE_SULOG' "$f" \
+              && grep -q 'KSU_FEATURE_KERNEL_UMOUNT' "$f" \
+              && grep -q 'KSU_FEATURE_SU_COMPAT' "$f"; then
+              echo "✅ Feature IDs found in $f"
+              feature_defs_ok=1
+            else
+              echo "::warning::Feature IDs missing from $f"
+            fi
+          fi
+        done
+
+        if [ "$feature_defs_ok" = 0 ]; then
+          echo "::warning::No staged uapi/feature.h contains all expected KSU_FEATURE_* IDs"
+          echo "Adding compatibility feature ID definitions to staged uapi/feature.h files"
+
+          for f in "${FEATURE_UAPI_CANDIDATES[@]}"; do
+            if [ -f "$f" ]; then
+              cat >> "$f" <<'EOF'
+
+        #ifndef KSU_FEATURE_SU_COMPAT
+        #define KSU_FEATURE_SU_COMPAT 1
+        #endif
+
+        #ifndef KSU_FEATURE_SULOG
+        #define KSU_FEATURE_SULOG 2
+        #endif
+
+        #ifndef KSU_FEATURE_KERNEL_UMOUNT
+        #define KSU_FEATURE_KERNEL_UMOUNT 3
+        #endif
+        EOF
+              echo "Patched fallback feature IDs into $f"
+            fi
+          done
+        fi
 
         echo ""
         echo "Final SukiSU header check:"
