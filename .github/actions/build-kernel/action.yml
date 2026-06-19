@@ -976,32 +976,19 @@ runs:
 
         cd "$KERNEL_PLATFORM_FOLDER"
 
-        MANAGER_BRANCH="main"
-        KSU_META="${{ inputs.ksu_branch_or_hash }}"
+        KSU_INPUT="${{ inputs.ksu_branch_or_hash }}"
 
-        # If no input is provided, use the original expected default format.
-        # Format: branch/custom_tag(optional)/commit_hash(optional)
-        if [ -z "$KSU_META" ]; then
-          KSU_META="susfs-main//"
+        if [ -z "$KSU_INPUT" ]; then
+          echo "No SukiSU branch/hash provided. Using builtin installer mode."
+
+          curl --fail --location --proto '=https' -LSs \
+            "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/main/kernel/setup.sh" | bash -s builtin
+        else
+          echo "Using SukiSU branch/hash: $KSU_INPUT"
+
+          curl --fail --location --proto '=https' -LSs \
+            "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/main/kernel/setup.sh" | bash -s "$KSU_INPUT"
         fi
-
-        # Must contain two separators, meaning at least three fields.
-        if [[ "$(grep -o '/' <<< "$KSU_META" | wc -l)" -lt 2 ]]; then
-          echo "::error::KSU_META is missing required '/' separators."
-          echo "::error::Expected format: branch/custom_tag(optional)/commit_hash(optional)"
-          echo "::error::Example: susfs-main// or susfs-main/custom/abcdef123456"
-          exit 10
-        fi
-
-        # Parse fields: branch / custom tag / manual hash.
-        IFS='/' read -r BRANCH_NAME CUSTOM_TAG MANUAL_HASH <<< "$KSU_META"
-
-        echo "Branch name: $BRANCH_NAME"
-        [[ -n "$CUSTOM_TAG" ]] && echo "Custom version tag: $CUSTOM_TAG" || echo "Custom version tag: disabled"
-        [[ -n "$MANUAL_HASH" ]] && echo "Manually specified hash: $MANUAL_HASH" || echo "Manually specified hash: disabled"
-
-        curl --fail --location --proto '=https' -LSs \
-          "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/${MANAGER_BRANCH}/kernel/setup.sh" | bash -s "$BRANCH_NAME"
 
         if [ ! -d "$KERNEL_PLATFORM_FOLDER/KernelSU" ]; then
           echo "::error::KernelSU directory was not created by SukiSU setup."
@@ -1011,86 +998,35 @@ runs:
 
         cd "$KERNEL_PLATFORM_FOLDER/KernelSU"
 
-        # If a manual hash is specified, switch to that commit.
-        if [[ -n "$MANUAL_HASH" ]]; then
-          git fetch origin "$BRANCH_NAME" --depth=50
-          git checkout "$MANUAL_HASH"
-          SHORT_HASH="${MANUAL_HASH:0:8}"
-        fi
+        KSU_COMMIT_SHA="$(git rev-parse HEAD 2>/dev/null || echo unknown)"
+        COMMITS_COUNT="$(git rev-list --count HEAD 2>/dev/null || echo 30000)"
+        KSU_VERSION=$((COMMITS_COUNT + 37185))
 
-        KSU_VERSION_TAG="$(
-          curl -fsSL https://api.github.com/repos/SukiSU-Ultra/SukiSU-Ultra/releases/latest \
-            | grep '"tag_name":' \
-            | sed -E 's/.*"v?([^"]+)".*/\1/' \
-            || true
-        )"
-
-        if [[ -z "$KSU_VERSION_TAG" || "$(printf '%s\n' "$KSU_VERSION_TAG" "3.1.7" | sort -V | head -n1)" != "3.1.7" ]]; then
-          KSU_VERSION_TAG="3.1.7"
-        fi
-
-        TAG_NAME="v${KSU_VERSION_TAG}"
+        TAG_NAME="$(git describe --tags --abbrev=0 2>/dev/null || echo v4.1.3)"
         KSU_FULL_NAME="${TAG_NAME}-⚡Ultra⚡@SukiSU"
 
-        echo "KSU_VERSION_TAG=$KSU_VERSION_TAG" >> "$GITHUB_ENV"
-        echo "TAG_NAME=$TAG_NAME" >> "$GITHUB_ENV"
+        echo "Detected SukiSU commits: $COMMITS_COUNT"
+        echo "Calculated SukiSU Ultra version: $KSU_VERSION"
+        echo "SukiSU Ultra commit: $KSU_COMMIT_SHA"
+        echo "SukiSU full name: $KSU_FULL_NAME"
 
-        GIT_HASH="$(git rev-parse --short HEAD)"
-        KSU_COMMIT_SHA="$(git rev-parse HEAD 2>/dev/null || echo unknown)"
-
-        echo "GIT_HASH=$GIT_HASH"
-        echo "KSU_COMMIT_SHA=$KSU_COMMIT_SHA"
-        echo "TAG_NAME=$TAG_NAME"
-        echo "KSU_FULL_NAME=$KSU_FULL_NAME"
-
-        # Assemble the detailed version string.
-        if [[ -n "$MANUAL_HASH" ]]; then
-          USE_HASH="$SHORT_HASH"
-        else
-          USE_HASH="$GIT_HASH"
+        if [ -f "$KERNEL_PLATFORM_FOLDER/KernelSU/kernel/Makefile" ]; then
+          sed -i "s/DKSU_VERSION=[0-9]*/DKSU_VERSION=${KSU_VERSION}/" "$KERNEL_PLATFORM_FOLDER/KernelSU/kernel/Makefile" || true
+          sed -i "s/DKSU_VERSION=12800/DKSU_VERSION=${KSU_VERSION}/" "$KERNEL_PLATFORM_FOLDER/KernelSU/kernel/Makefile" || true
+          sed -i "s/DKSU_VERSION=11998/DKSU_VERSION=${KSU_VERSION}/" "$KERNEL_PLATFORM_FOLDER/KernelSU/kernel/Makefile" || true
+          sed -i "s/DKSU_VERSION=16/DKSU_VERSION=${KSU_VERSION}/" "$KERNEL_PLATFORM_FOLDER/KernelSU/kernel/Makefile" || true
         fi
 
-        if [[ -z "$CUSTOM_TAG" ]]; then
-          VERSION_FULL="v$KSU_VERSION_TAG-$USE_HASH@$BRANCH_NAME"
-        else
-          VERSION_FULL="v$KSU_VERSION_TAG-$CUSTOM_TAG@$BRANCH_NAME[$USE_HASH]"
-        fi
-
-        ESC_VERSION_FULL="$(printf '%s' "$VERSION_FULL" | sed 's/[&|\\/]/\\&/g')"
-        ESC_KSU_VERSION_TAG="$(printf '%s' "$KSU_VERSION_TAG" | sed 's/[&|\\/]/\\&/g')"
-
-        if grep -q '^KSU_VERSION_FULL := ' kernel/Makefile; then
-          sed -i "s|^KSU_VERSION_FULL := .*|KSU_VERSION_FULL := $ESC_VERSION_FULL|" kernel/Makefile
-        else
-          awk -v full="$VERSION_FULL" '
-            /^REPO_OWNER :=/ && !done {
-              print
-              print ""
-              print "KSU_VERSION_FULL := " full
-              done=1
-              next
-            }
-            { print }
-          ' kernel/Makefile > kernel/Makefile.tmp && mv kernel/Makefile.tmp kernel/Makefile
-        fi
-
-        if grep -q '^KSU_VERSION_API := ' kernel/Makefile; then
-          sed -i "s|^KSU_VERSION_API := .*|KSU_VERSION_API := $ESC_KSU_VERSION_TAG|" kernel/Makefile
-        fi
-
-        KSU_VERSION="$(expr $(git rev-list --count "$MANAGER_BRANCH" 2>/dev/null || echo 13000) + 37185)"
+        # Avoid detached-HEAD naming where possible.
+        # Some SukiSU revisions derive the display name from Git branch metadata.
+        git checkout -B SukiSU "$KSU_COMMIT_SHA" 2>/dev/null || true
 
         {
-          echo "KSUVER=$KSU_VERSION"
           echo "KSU_COMMIT_SHA=$KSU_COMMIT_SHA"
+          echo "KSUVER=$KSU_VERSION"
           echo "KSU_FULL_NAME=$KSU_FULL_NAME"
-          echo "KSU_VERSION_FULL=$VERSION_FULL"
           echo "NEED_HOOKS=false"
         } >> "$GITHUB_ENV"
-
-        echo "::group::Preview of final version information in Makefile and partial debug results"
-        grep -nE '^(REPO_OWNER|REPO_NAME|REPO_BRANCH|KSU_VERSION_API|KSU_VERSION_FULL|VERSION_TAG|GIT_BIN|CURL_BIN)' kernel/Makefile || true
-        echo "::endgroup::"
 
         DEFCONFIG="$COMMON_KERNEL_FOLDER/arch/arm64/configs/gki_defconfig"
 
@@ -1108,7 +1044,7 @@ runs:
           printf '%s\n' 'CONFIG_KSU=y'
           printf '%s\n' 'CONFIG_KPM=n'
           printf '%s\n' 'CONFIG_KSU_MULTI_MANAGER_SUPPORT=y'
-          printf '%s\n' "CONFIG_KSU_FULL_NAME_FORMAT=\"$KSU_FULL_NAME\""
+          printf '%s\n' 'CONFIG_KSU_FULL_NAME_FORMAT="%TAG_NAME%-⚡Ultra⚡@SukiSU"'
         } >> "$DEFCONFIG"
 
         echo "SukiSU defconfig entries:"
@@ -1120,10 +1056,7 @@ runs:
           echo "$KSU_FULL_NAME"
         } >> "${ARTIFACTS_FOLDER}/${OP_MODEL}_${OP_OS_VERSION}.txt"
 
-        echo "✅ SukiSU Ultra added"
-        echo "Version full: $VERSION_FULL"
-        echo "Display name: $KSU_FULL_NAME"
-        echo "Commit: ${KSU_COMMIT_SHA:0:8}"
+        echo "✅ SukiSU Ultra added commit: ${KSU_COMMIT_SHA:0:8}"
         echo "::endgroup::"
 
     - name: Apply Patches SukiSU Ultra
