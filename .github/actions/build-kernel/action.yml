@@ -1061,17 +1061,17 @@ runs:
 
     - name: Normalize SukiSU Ultra header layout
       shell: bash
-      if: ${{ inputs.ksu_type == 'SUKISU' }}
+      if: ${{ inputs.ksu_type == 'SUKISU' && env.KERNEL_VER == '6.12' }}
       run: |
         set -euo pipefail
-        echo "::group::Normalize SukiSU Ultra header layout"
-
+        echo "::group::Normalize SukiSU Ultra header layout if needed"
+    
         KSU_DRIVER_DIR="$COMMON_KERNEL_FOLDER/drivers/kernelsu"
-
+    
         if [ ! -d "$KSU_DRIVER_DIR" ]; then
           echo "::warning::drivers/kernelsu not found at expected path: $KSU_DRIVER_DIR"
           echo "Searching for kernelsu driver directory..."
-
+    
           FOUND_KSU_DRIVER_DIR="$(
             find "$COMMON_KERNEL_FOLDER" "$KERNEL_PLATFORM_FOLDER" \
               -type d \
@@ -1079,77 +1079,109 @@ runs:
               -print \
               -quit 2>/dev/null || true
           )"
-
+    
           if [ -n "$FOUND_KSU_DRIVER_DIR" ]; then
             KSU_DRIVER_DIR="$FOUND_KSU_DRIVER_DIR"
           fi
         fi
-
+    
         if [ ! -d "$KSU_DRIVER_DIR" ]; then
           echo "::error::Unable to locate drivers/kernelsu directory"
           find "$KERNEL_PLATFORM_FOLDER" -maxdepth 5 -type d \( -iname '*kernelsu*' -o -iname '*ksu*' \) -print || true
           exit 1
         fi
-
+    
         echo "Using KSU driver directory: $KSU_DRIVER_DIR"
-
+    
+        NEED_NORMALIZE=false
+    
+        required_probe_headers=(
+          "$KSU_DRIVER_DIR/core/ksu.h"
+          "$KSU_DRIVER_DIR/core/klog.h"
+          "$KSU_DRIVER_DIR/core/arch.h"
+          "$KSU_DRIVER_DIR/feature/uapi/feature.h"
+          "$KSU_DRIVER_DIR/policy/uapi/app_profile.h"
+          "$KSU_DRIVER_DIR/sulog/uapi/sulog.h"
+        )
+    
+        echo ""
+        echo "Checking whether SukiSU header normalization is needed..."
+    
+        for h in "${required_probe_headers[@]}"; do
+          if [ ! -f "$h" ]; then
+            echo "Missing expected SukiSU header: $h"
+            NEED_NORMALIZE=true
+          else
+            echo "Found expected SukiSU header: $h"
+          fi
+        done
+    
+        if [ "$NEED_NORMALIZE" != "true" ]; then
+          echo "SukiSU header layout already looks valid. Skipping normalization."
+          echo "::endgroup::"
+          exit 0
+        fi
+    
+        echo ""
+        echo "SukiSU header layout normalization is needed."
+    
         find_header() {
           local name="$1"
-
+    
           find "$KERNEL_PLATFORM_FOLDER/KernelSU" "$KSU_DRIVER_DIR" \
             -type f \
             -name "$name" \
             -print \
             -quit 2>/dev/null || true
         }
-
+    
         find_uapi_header() {
           local name="$1"
-
-          # Prefer real UAPI headers first.
+    
           find "$KERNEL_PLATFORM_FOLDER/KernelSU" "$KSU_DRIVER_DIR" \
             -type f \
             \( \
               -path "*/uapi/$name" \
               -o -path "*/include/uapi/$name" \
               -o -path "*/kernel/uapi/$name" \
+              -o -path "*/kernel/include/uapi/$name" \
             \) \
             -print \
             -quit 2>/dev/null || true
         }
-
+    
         copy_header_to_dir() {
           local header="$1"
           local dest_dir="$2"
-
+    
           local src
           local dest
           local src_real
           local dest_real
-
+    
           src="$(find_header "$header")"
           dest="$dest_dir/$header"
-
+    
           if [ -z "$src" ]; then
             echo "::warning::Header not found in SukiSU tree: $header"
             return 0
           fi
-
+    
           mkdir -p "$dest_dir"
-
+    
           src_real="$(readlink -f "$src" 2>/dev/null || printf '%s' "$src")"
           dest_real="$(readlink -f "$dest" 2>/dev/null || printf '%s' "$dest")"
-
+    
           if [ "$src_real" = "$dest_real" ]; then
             echo "Header already in place or same inode: $dest"
             return 0
           fi
-
+    
           if [ -f "$dest" ] && cmp -s "$src" "$dest"; then
             echo "Header already identical: $dest"
             return 0
           fi
-
+    
           if cp -f "$src" "$dest"; then
             echo "Copied $header -> $dest_dir/"
           else
@@ -1157,44 +1189,57 @@ runs:
             return 0
           fi
         }
-
+    
         copy_uapi_header_to_dir() {
           local header="$1"
           local dest_dir="$2"
-
+    
           local src
           local dest
           local src_real
           local dest_real
-
+    
           src="$(find_uapi_header "$header")"
-
+    
           if [ -z "$src" ]; then
-            src="$(find_header "$header")"
+            case "$header" in
+              ksu.h|klog.h|arch.h|util.h|selinux.h|supercall.h|allowlist.h|kernel_compat.h|event.h)
+                echo "::warning::Real UAPI $header not found. Falling back to non-UAPI header."
+                src="$(find_header "$header")"
+                ;;
+              feature.h|app_profile.h|sulog.h)
+                echo "::warning::Real UAPI $header not found. Falling back to non-UAPI header for 6.12 compatibility."
+                src="$(find_header "$header")"
+                ;;
+              *)
+                echo "::warning::Real UAPI $header not found and no safe fallback is defined."
+                return 0
+                ;;
+            esac
           fi
-
+    
           dest="$dest_dir/$header"
-
+    
           if [ -z "$src" ]; then
             echo "::warning::UAPI header not found in SukiSU tree: $header"
             return 0
           fi
-
+    
           mkdir -p "$dest_dir"
-
+    
           src_real="$(readlink -f "$src" 2>/dev/null || printf '%s' "$src")"
           dest_real="$(readlink -f "$dest" 2>/dev/null || printf '%s' "$dest")"
-
+    
           if [ "$src_real" = "$dest_real" ]; then
             echo "UAPI header already in place or same inode: $dest"
             return 0
           fi
-
+    
           if [ -f "$dest" ] && cmp -s "$src" "$dest"; then
             echo "UAPI header already identical: $dest"
             return 0
           fi
-
+    
           if cp -f "$src" "$dest"; then
             echo "Copied UAPI $header -> $dest_dir/ from $src"
           else
@@ -1202,21 +1247,28 @@ runs:
             return 0
           fi
         }
-
+    
         echo ""
         echo "Available feature.h candidates:"
         find "$KERNEL_PLATFORM_FOLDER/KernelSU" "$KSU_DRIVER_DIR" \
           -type f \
           -name 'feature.h' \
           -print 2>/dev/null || true
-
+    
+        echo ""
+        echo "Available app_profile.h candidates:"
+        find "$KERNEL_PLATFORM_FOLDER/KernelSU" "$KSU_DRIVER_DIR" \
+          -type f \
+          -name 'app_profile.h' \
+          -print 2>/dev/null || true
+    
         echo ""
         echo "Available sulog.h candidates:"
         find "$KERNEL_PLATFORM_FOLDER/KernelSU" "$KSU_DRIVER_DIR" \
           -type f \
           -name 'sulog.h' \
           -print 2>/dev/null || true
-
+    
         common_headers=(
           ksu.h
           klog.h
@@ -1231,7 +1283,7 @@ runs:
           sulog.h
           event.h
         )
-
+    
         common_dest_dirs=(
           "$KSU_DRIVER_DIR"
           "$KSU_DRIVER_DIR/core"
@@ -1239,15 +1291,16 @@ runs:
           "$KSU_DRIVER_DIR/policy"
           "$KSU_DRIVER_DIR/sulog"
         )
-
+    
+        echo ""
+        echo "Copying common SukiSU headers into expected local include locations..."
+    
         for h in "${common_headers[@]}"; do
           for d in "${common_dest_dirs[@]}"; do
             copy_header_to_dir "$h" "$d"
           done
         done
-
-        # UAPI headers must come from real */uapi/*.h when possible.
-        # Do not blindly copy policy/feature.h into uapi/feature.h.
+    
         uapi_headers=(
           app_profile.h
           feature.h
@@ -1262,7 +1315,7 @@ runs:
           kernel_compat.h
           event.h
         )
-
+    
         uapi_dest_dirs=(
           "$KSU_DRIVER_DIR/policy/uapi"
           "$KSU_DRIVER_DIR/feature/uapi"
@@ -1271,19 +1324,25 @@ runs:
           "$KSU_DRIVER_DIR/uapi"
           "$KSU_DRIVER_DIR/include/uapi"
         )
-
+    
+        echo ""
+        echo "Preparing UAPI destination directories..."
+    
         for d in "${uapi_dest_dirs[@]}"; do
           mkdir -p "$d"
         done
-
+    
         mkdir -p "$KSU_DRIVER_DIR/include/linux"
-
+    
+        echo ""
+        echo "Copying SukiSU UAPI headers into expected UAPI include locations..."
+    
         for h in "${uapi_headers[@]}"; do
           for d in "${uapi_dest_dirs[@]}"; do
             copy_uapi_header_to_dir "$h" "$d"
           done
         done
-
+    
         linux_fallback_headers=(
           ksu.h
           klog.h
@@ -1297,14 +1356,17 @@ runs:
           supercall.h
           event.h
         )
-
+    
+        echo ""
+        echo "Copying fallback headers into include/linux..."
+    
         for h in "${linux_fallback_headers[@]}"; do
           copy_header_to_dir "$h" "$KSU_DRIVER_DIR/include/linux"
         done
-
+    
         echo ""
         echo "Validating staged uapi/feature.h content..."
-
+    
         FEATURE_UAPI_CANDIDATES=(
           "$KSU_DRIVER_DIR/policy/uapi/feature.h"
           "$KSU_DRIVER_DIR/feature/uapi/feature.h"
@@ -1312,12 +1374,13 @@ runs:
           "$KSU_DRIVER_DIR/uapi/feature.h"
           "$KSU_DRIVER_DIR/include/uapi/feature.h"
         )
-
+    
         feature_defs_ok=0
-
+    
         for f in "${FEATURE_UAPI_CANDIDATES[@]}"; do
           if [ -f "$f" ]; then
             echo "Checking $f"
+    
             if grep -q 'KSU_FEATURE_SULOG' "$f" \
               && grep -q 'KSU_FEATURE_KERNEL_UMOUNT' "$f" \
               && grep -q 'KSU_FEATURE_SU_COMPAT' "$f"; then
@@ -1328,23 +1391,23 @@ runs:
             fi
           fi
         done
-
+    
         if [ "$feature_defs_ok" = 0 ]; then
           echo "::warning::No staged uapi/feature.h contains all expected KSU_FEATURE_* IDs"
           echo "Adding compatibility feature ID definitions to staged uapi/feature.h files"
-
+    
           for f in "${FEATURE_UAPI_CANDIDATES[@]}"; do
             if [ -f "$f" ]; then
               cat >> "$f" <<'EOF'
-
+    
         #ifndef KSU_FEATURE_SU_COMPAT
         #define KSU_FEATURE_SU_COMPAT 1
         #endif
-
+    
         #ifndef KSU_FEATURE_SULOG
         #define KSU_FEATURE_SULOG 2
         #endif
-
+    
         #ifndef KSU_FEATURE_KERNEL_UMOUNT
         #define KSU_FEATURE_KERNEL_UMOUNT 3
         #endif
@@ -1353,10 +1416,10 @@ runs:
             fi
           done
         fi
-
+    
         echo ""
         echo "Final SukiSU header check:"
-
+    
         required_headers=(
           "$KSU_DRIVER_DIR/ksu.h"
           "$KSU_DRIVER_DIR/core/ksu.h"
@@ -1378,9 +1441,9 @@ runs:
           "$KSU_DRIVER_DIR/klog.h"
           "$KSU_DRIVER_DIR/arch.h"
         )
-
+    
         missing=0
-
+    
         for h in "${required_headers[@]}"; do
           if [ -f "$h" ]; then
             echo "✅ $h"
@@ -1389,17 +1452,17 @@ runs:
             missing=1
           fi
         done
-
+    
         echo ""
         echo "Nearby SukiSU headers:"
         find "$KSU_DRIVER_DIR" -maxdepth 5 -type f \
           | grep -E '/(ksu|klog|arch|app_profile|feature|sulog|event|util|selinux|supercall|allowlist|kernel_compat)\.h$' \
           || true
-
+    
         if [ "$missing" = 1 ]; then
           echo "::warning::Some expected SukiSU headers are still missing. Build may fail if this SukiSU commit changed its header layout."
         fi
-
+    
         echo "✅ SukiSU Ultra header layout normalization completed"
         echo "::endgroup::"
 
@@ -2124,31 +2187,44 @@ runs:
         CUSTOM_LOCALVERSION="-${ANDROID_VER}-${OP_UNAME}"
         echo "CUSTOM_LOCALVERSION=$CUSTOM_LOCALVERSION" >> "$GITHUB_ENV"
 
-    - name: Clean Kconfig formatting warnings
+    - name: Clean modified Kconfig formatting warnings
       shell: bash
       run: |
         set -euo pipefail
-
-        echo "::group::Clean Kconfig formatting warnings"
-
+    
+        echo "::group::Clean modified Kconfig formatting warnings"
+    
         cd "$COMMON_KERNEL_FOLDER"
-
-        echo "Removing CRLF from Kconfig files..."
-        find . -name Kconfig -type f -exec sed -i 's/\r$//' {} +
-
-        echo "Ensuring Kconfig files end with newline..."
-        find . -name Kconfig -type f -exec sh -c '
-          for f do
-            if [ -s "$f" ]; then
-              last_char="$(tail -c 1 "$f" | od -An -t x1 | tr -d " \n")"
-              if [ "$last_char" != "0a" ]; then
-                printf "\n" >> "$f"
-              fi
+    
+        KCONFIG_FILES="$(
+          {
+            git diff --name-only -- '*Kconfig'
+            git ls-files --others --exclude-standard -- '*Kconfig'
+          } | sort -u
+        )"
+    
+        if [ -z "$KCONFIG_FILES" ]; then
+          echo "No modified or untracked Kconfig files found"
+          echo "::endgroup::"
+          exit 0
+        fi
+    
+        echo "$KCONFIG_FILES" | while IFS= read -r f; do
+          [ -f "$f" ] || continue
+    
+          echo "Cleaning $f"
+    
+          sed -i 's/\r$//' "$f"
+    
+          if [ -s "$f" ]; then
+            last_char="$(tail -c 1 "$f" | od -An -t x1 | tr -d " \n")"
+            if [ "$last_char" != "0a" ]; then
+              printf "\n" >> "$f"
             fi
-          done
-        ' sh {} +
-
-        echo "✅ Kconfig formatting cleanup complete"
+          fi
+        done
+    
+        echo "✅ Modified/untracked Kconfig formatting cleanup complete"
         echo "::endgroup::"
 
     - name: Build Kernel
