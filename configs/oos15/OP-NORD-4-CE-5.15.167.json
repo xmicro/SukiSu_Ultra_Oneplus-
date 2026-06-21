@@ -1,4 +1,4 @@
-﻿{
+{
   "model": "OP-NORD-4-CE-5.15.167",
   "soc": "crow",
   "branch": "wild/sm7550",
@@ -15,13 +15,12 @@
   "disk_cleanup": false,
   "hmbird": false,
   "susfs": true,
-  "ds": true,
+  "ds": false,
   "bbg": true,
   "bbr": true,
   "ttl": true,
   "ip_set": true,
   "unicode": true,
-  "ntsync": true,
+  "ntsync": false,
   "uname": "OP-Ultra"
 }
-

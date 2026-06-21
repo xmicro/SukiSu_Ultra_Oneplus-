@@ -1,4 +1,4 @@
-﻿{
+{
   "model": "OP-PAD-3-PRO",
   "soc": "canoe",
   "branch": "wild/sm8850",
@@ -15,13 +15,12 @@
   "disk_cleanup": true,
   "hmbird": false,
   "susfs": true,
-  "ds": true,
+  "ds": false,
   "bbg": true,
   "bbr": true,
   "ttl": true,
   "ip_set": true,
   "unicode": true,
-  "ntsync": true,
+  "ntsync": false,
   "uname": "OP-Ultra"
 }
-

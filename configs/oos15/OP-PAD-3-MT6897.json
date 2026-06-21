@@ -1,4 +1,4 @@
-﻿{
+{
   "model": "OP-PAD-3-MT6897",
   "soc": "dimensity_83xx",
   "branch": "wild/mt6897",
@@ -15,13 +15,12 @@
   "disk_cleanup": false,
   "hmbird": false,
   "susfs": true,
-  "ds": true,
+  "ds": false,
   "bbg": true,
   "bbr": true,
   "ttl": true,
   "ip_set": true,
   "unicode": true,
-  "ntsync": true,
+  "ntsync": false,
   "uname": "OP-Ultra"
 }
-

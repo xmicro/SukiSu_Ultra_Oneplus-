@@ -1,4 +1,4 @@
-﻿{
+{
   "model": "OP-NORD-N30-SE",
   "soc": "dimensity700",
   "branch": "wild/mt6833",
@@ -15,13 +15,12 @@
   "disk_cleanup": false,
   "hmbird": false,
   "susfs": true,
-  "ds": true,
+  "ds": false,
   "bbg": true,
   "bbr": true,
   "ttl": true,
   "ip_set": true,
   "unicode": true,
-  "ntsync": true,
+  "ntsync": false,
   "uname": "OP-Ultra"
 }
-

@@ -1,4 +1,4 @@
-﻿{
+{
   "model": "OP13T",
   "soc": "sun",
   "branch": "wild/sm8750",
@@ -15,13 +15,12 @@
   "disk_cleanup": false,
   "hmbird": true,
   "susfs": true,
-  "ds": true,
+  "ds": false,
   "bbg": true,
   "bbr": true,
   "ttl": true,
   "ip_set": true,
   "unicode": true,
-  "ntsync": true,
+  "ntsync": false,
   "uname": "OP-Ultra"
 }
-
