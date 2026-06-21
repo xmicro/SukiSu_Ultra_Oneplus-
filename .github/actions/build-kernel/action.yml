@@ -1568,9 +1568,49 @@ runs:
             echo "SUSFS_COMMIT_SHA=$SUSFS_COMMIT_SHA"
           } >> "$GITHUB_ENV"
         fi
+        
+        retry_clone() {
+          local url="$1"
+          local branch="${2:-main}"
+          local depth="${3:-1}"
+          local dir="${4:-$(basename "$url" .git)}"
 
-        rm -rf SukiSU_patch
-        git clone https://github.com/ShirkNeko/SukiSU_patch.git
+          local max_attempts=3
+          local attempt=1
+          local clone_args=(--branch "$branch")
+
+          if [ "$depth" != "0" ] && [ -n "$depth" ]; then
+            clone_args+=(--depth "$depth")
+          fi
+
+          while [ "$attempt" -le "$max_attempts" ]; do
+            echo "Attempt $attempt/$max_attempts: cloning $url ($branch) into $dir"
+            rm -rf "$dir"
+
+            if git clone "${clone_args[@]}" "$url" "$dir"; then
+              echo "✅ Cloned: $url → $dir"
+              return 0
+            fi
+
+            rm -rf "$dir" 2>/dev/null || true
+            sleep $((attempt * 5))
+            attempt=$((attempt + 1))
+          done
+
+          echo "::error::All clone attempts failed for $url"
+          return 1
+        }
+       
+        rm -rf "$CONFIG_FOLDER/SukiSU_patch"
+        retry_clone \
+          "https://github.com/ShirkNeko/SukiSU_patch.git" \
+          "main" "1" \
+          "$CONFIG_FOLDER/SukiSU_patch"
+
+        if [ ! -d "$CONFIG_FOLDER/SukiSU_patch" ]; then
+          echo "::error::SukiSU_patch clone failed"
+          exit 1
+        fi
 
         cd "$KERNEL_PLATFORM_FOLDER"
 
@@ -1586,13 +1626,15 @@ runs:
         fi
 
         cp "$SUSFS_SRC_PATCH" "$COMMON_KERNEL_FOLDER/"
-
+       
         if [ -d "$SUSFS_FOLDER/kernel_patches/fs" ]; then
-          cp "$SUSFS_FOLDER/kernel_patches/fs/"* "$COMMON_KERNEL_FOLDER/fs/" || true
+          find "$SUSFS_FOLDER/kernel_patches/fs" -maxdepth 1 -type f \
+            -exec cp -f {} "$COMMON_KERNEL_FOLDER/fs/" \;
         fi
 
         if [ -d "$SUSFS_FOLDER/kernel_patches/include/linux" ]; then
-          cp "$SUSFS_FOLDER/kernel_patches/include/linux/"* "$COMMON_KERNEL_FOLDER/include/linux/" || true
+          find "$SUSFS_FOLDER/kernel_patches/include/linux" -maxdepth 1 -type f \
+            -exec cp -f {} "$COMMON_KERNEL_FOLDER/include/linux/" \;
         fi
 
         SUSVER="unknown"
@@ -1777,7 +1819,9 @@ runs:
             fake_patched_swap=1
           fi
 
-          if [ -f "./fs/namespace.c" ] && ! grep -qxF '#include <trace/hooks/fs.h>' ./fs/namespace.c && ! grep -qxF 'susfs_def.h' ./fs/namespace.c; then
+          if [ -f "./fs/namespace.c" ] \
+            && ! grep -qxF '#include <trace/hooks/fs.h>' ./fs/namespace.c \
+            && ! grep -qxF 'susfs_def.h' ./fs/namespace.c; then
             echo "trace/hooks/fs.h not present before SUSFS patch; leaving namespace.c unchanged"
             fake_patched_ns=0
           fi
