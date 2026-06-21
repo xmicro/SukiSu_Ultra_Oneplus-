@@ -3303,7 +3303,7 @@ runs:
         path: ${{ env.DEBUG_ARTIFACTS_FOLDER }}
         compression-level: 9
         retention-days: 90
-
+    
     - name: Upload Artifacts
       if: success() && steps.create_zip.conclusion == 'success'
       uses: actions/upload-artifact@v7
@@ -3313,6 +3313,19 @@ runs:
         archive: false
         compression-level: 0
         retention-days: 90
+
+    - name: Upload ccache log
+      if: ${{ success() && inputs.debug == 'true' && steps.build_kernel_step.conclusion == 'success' }}
+      uses: actions/upload-artifact@v7
+      with:
+        name: "${{ env.OP_MODEL }}_${{ env.OP_OS_VERSION }}_${{ env.KERNEL_FULL_VER }}_ccache.log"
+        path: |
+          ${{ env.CCACHE_LOGFILE }}
+          ${{ github.workspace }}/${{ env.OP_MODEL }}_${{ env.OP_OS_VERSION }}_${{ env.KERNEL_FULL_VER }}_ccache.log
+        archive: false
+        compression-level: 0
+        retention-days: 90
+        if-no-files-found: ignore    
 
     - name: 📥 Checkout Code
       uses: actions/checkout@v6
