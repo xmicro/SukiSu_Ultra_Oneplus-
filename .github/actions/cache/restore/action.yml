@@ -94,7 +94,6 @@ runs:
             continue
           fi
 
-          # ✅ Extraction robuste des métadonnées
           BASE_FILENAME=$(echo "$MATCH" | sed -E 's/\.(tzst|tar)(\.part[a-z]{2})?$//')
           EXT=$(echo "$MATCH" | grep -oP '\.(tzst|tar)' | head -n 1)
 
@@ -125,7 +124,6 @@ runs:
                   --retry-wait=10 --max-tries=10 \
                   -o "$filename" "$url"; then
 
-                # ✅ FIX — vérifier la taille après téléchargement
                 local dl_size
                 dl_size="$(stat -c%s "$filename" 2>/dev/null || echo 0)"
                 if [ "$dl_size" -lt 1024 ]; then
@@ -146,7 +144,6 @@ runs:
           }
 
           if [ "$IS_SPLIT" = "true" ]; then
-            # ✅ FIX — télécharger uniquement les parts listées dans ALL_ASSETS
             for part in {a..z}{a..z}; do
               PART_NAME="$BASE_FILENAME$EXT.part${part}"
               if echo "$ALL_ASSETS" | grep -q "^${PART_NAME}$"; then
@@ -172,24 +169,32 @@ runs:
           # ──────────────────────────────────────────────
           echo "::group:: Extracting Cache"
 
-          mkdir -p "${{ inputs.cache_path }}"
           FINAL_ARCHIVE="$BASE_FILENAME$EXT"
-          EXTRACT_DIR="$(dirname "${{ inputs.cache_path }}")"
+
+          # ✅ FIX — EXTRACT_DIR = parent de cache_path
+          #          NE PAS créer cache_path avant l'extraction :
+          #          tar recrée BASE_NAME (ex: OOS16/) dans EXTRACT_DIR
+          #          → résultat final = cache_path intact
+          CACHE_PATH="${{ inputs.cache_path }}"
+          EXTRACT_DIR="$(dirname "$CACHE_PATH")"
+
+          # ✅ FIX — créer uniquement le parent, pas cache_path lui-même
+          mkdir -p "$EXTRACT_DIR"
+
+          echo "  cache_path:  $CACHE_PATH"
+          echo "  extract_dir: $EXTRACT_DIR"
 
           extract_cache() {
             local cmd="$1"
             if [ "${{ inputs.debug }}" = "true" ]; then
               sh -c "$cmd"
             else
-              # ✅ FIX — afficher les 5 dernières lignes en cas d'erreur
               sh -c "$cmd" 2>&1 | tail -n 5 || true
             fi
           }
 
           if [ "$IS_SPLIT" = "true" ]; then
 
-            # ✅ FIX — collecter les parts dans un tableau trié,
-            #          vérifier la taille de chaque part individuellement
             PARTS_LIST=()
             for part in {a..z}{a..z}; do
               PART_FILE="$FINAL_ARCHIVE.part${part}"
@@ -216,24 +221,20 @@ runs:
             done
 
             if [ "$COMPRESSED" = "true" ]; then
-              # ✅ FIX — test d'intégrité zstd du flux assemblé (non bloquant)
               if ! cat "${PARTS_LIST[@]}" | zstd -d -T0 --test > /dev/null 2>&1; then
                 echo "::warning::zstd stream integrity check failed — attempting extraction anyway"
               else
                 echo "✅ zstd stream integrity check passed"
               fi
-              # ✅ FIX — printf '%q' pour gérer les espaces dans les chemins
               extract_cache "cat $(printf '%q ' "${PARTS_LIST[@]}") | tar -I 'zstd -d -T0' -xf - -C $(printf '%q' "$EXTRACT_DIR")"
             else
               extract_cache "cat $(printf '%q ' "${PARTS_LIST[@]}") | tar -xf - -C $(printf '%q' "$EXTRACT_DIR")"
             fi
 
-            # ✅ FIX — nettoyage explicite via le tableau (pas de glob nu)
             rm -f "${PARTS_LIST[@]}"
 
           else
 
-            # ✅ FIX — vérifier la taille de l'archive avant extraction
             ARCHIVE_SIZE="$(stat -c%s "$FINAL_ARCHIVE" 2>/dev/null || echo 0)"
             if [ "$ARCHIVE_SIZE" -lt 1024 ]; then
               echo "::error::Archive file suspiciously small (${ARCHIVE_SIZE} bytes): $FINAL_ARCHIVE"
@@ -242,7 +243,6 @@ runs:
             echo "Archive size: $(numfmt --to=iec-i --suffix=B "$ARCHIVE_SIZE")"
 
             if [ "$COMPRESSED" = "true" ]; then
-              # ✅ FIX — test d'intégrité zstd avant extraction (non bloquant)
               if ! zstd -d -T0 --test "$FINAL_ARCHIVE" > /dev/null 2>&1; then
                 echo "::warning::zstd integrity check failed — attempting extraction anyway"
               else
@@ -256,12 +256,20 @@ runs:
             rm -f "$FINAL_ARCHIVE"
           fi
 
-          # ✅ FIX — vérifier que l'extraction a produit des fichiers
-          EXTRACTED_COUNT="$(find "${{ inputs.cache_path }}" -mindepth 1 -maxdepth 3 -type f 2>/dev/null | wc -l || echo 0)"
-          if [ "$EXTRACTED_COUNT" -eq 0 ]; then
-            echo "::warning::Extraction completed but no files found in ${{ inputs.cache_path }}"
+          # ✅ FIX — vérifier cache_path (pas EXTRACT_DIR) après extraction
+          if [ -d "$CACHE_PATH" ]; then
+            EXTRACTED_COUNT="$(find "$CACHE_PATH" -mindepth 1 -maxdepth 3 -type f 2>/dev/null | wc -l || echo 0)"
+            if [ "$EXTRACTED_COUNT" -eq 0 ]; then
+              echo "::warning::Extraction completed but no files found in $CACHE_PATH"
+              echo "  Contents of EXTRACT_DIR ($EXTRACT_DIR):"
+              ls -la "$EXTRACT_DIR" 2>/dev/null || true
+            else
+              echo "✅ Restore complete. ~${EXTRACTED_COUNT} file(s) in $CACHE_PATH"
+            fi
           else
-            echo "✅ Restore complete. ~${EXTRACTED_COUNT} file(s) in ${{ inputs.cache_path }}"
+            echo "::warning::cache_path does not exist after extraction: $CACHE_PATH"
+            echo "  Contents of EXTRACT_DIR ($EXTRACT_DIR):"
+            ls -la "$EXTRACT_DIR" 2>/dev/null || true
           fi
 
           echo "::endgroup::"
