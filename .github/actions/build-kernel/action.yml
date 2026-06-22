@@ -3378,7 +3378,7 @@ runs:
         path: main-source
         fetch-depth: 1
 
-        - name: Normalize ccache before saving
+    - name: Normalize ccache before saving
       if: ${{ always() && steps.build_kernel_step.conclusion == 'success' }}
       shell: bash
       run: |
