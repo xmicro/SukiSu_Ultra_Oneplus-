@@ -1545,16 +1545,23 @@ runs:
           fi
         }
 
-        set_config "CONFIG_KSU_SUSFS=y"
-        set_config "CONFIG_KSU_SUSFS_SUS_PATH=y"
-        set_config "CONFIG_KSU_SUSFS_SUS_MAP=y"
-        set_config "CONFIG_KSU_SUSFS_SUS_MOUNT=y"
-        set_config "CONFIG_KSU_SUSFS_SUS_KSTAT=y"
-        set_config "CONFIG_KSU_SUSFS_SPOOF_UNAME=y"
-        set_config "CONFIG_KSU_SUSFS_ENABLE_LOG=y"
-        set_config "CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS=y"
-        set_config "CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG=y"
-        set_config "CONFIG_KSU_SUSFS_OPEN_REDIRECT=y"
+        set_config_line "CONFIG_KSU_SUSFS=y"
+        set_config_line "CONFIG_KSU_SUSFS_HAS_MAGIC_MOUNT=y"
+        set_config_line "CONFIG_KSU_SUSFS_SUS_PATH=y"
+        set_config_line "CONFIG_KSU_SUSFS_SUS_MOUNT=y"
+        set_config_line "CONFIG_KSU_SUSFS_AUTO_ADD_SUS_KSU_DEFAULT_MOUNT=y"
+        set_config_line "CONFIG_KSU_SUSFS_AUTO_ADD_SUS_BIND_MOUNT=y"
+        set_config_line "CONFIG_KSU_SUSFS_SUS_KSTAT=y"
+        set_config_line "CONFIG_KSU_SUSFS_SUS_OVERLAYFS=n"
+        set_config_line "CONFIG_KSU_SUSFS_TRY_UMOUNT=y"
+        set_config_line "CONFIG_KSU_SUSFS_AUTO_ADD_TRY_UMOUNT_FOR_BIND_MOUNT=y"
+        set_config_line "CONFIG_KSU_SUSFS_SPOOF_UNAME=y"
+        set_config_line "CONFIG_KSU_SUSFS_ENABLE_LOG=y"
+        set_config_line "CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS=y"
+        set_config_line "CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG=y"
+        set_config_line "CONFIG_KSU_SUSFS_OPEN_REDIRECT=y"
+        set_config_line "CONFIG_KSU_SUSFS_SUS_MAP=y"
+        set_config_line "CONFIG_KSU_SUSFS_SUS_SU=n"
 
         echo "SUSFS defconfig entries:"
         grep -nE '^CONFIG_KSU_SUSFS' "$DEFCONFIG" || true
